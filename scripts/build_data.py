@@ -4,11 +4,13 @@ Build the dashboard data file from data/carsandbids_master.csv.
 Output: public/data/auctions.json
 Format: { makes: [...], bodies: [...], records: [[...], ...], meta: {...} }
 
-Each record is a 12-element array:
+Each record is a 13-element array:
   [year, makeIdx, model, sale_price, mileage, num_bids, num_views,
-   sold(0|1), no_reserve(0|1), bodyIdx, transmission("M"|"A"|""), monthOffset]
+   sold(0|1), no_reserve(0|1), bodyIdx, transmission("M"|"A"|""),
+   monthOffset, dayOffset]
 
 monthOffset: months since 2021-08 (the dataset start). Month 0 = Aug 2021.
+dayOffset:   days since 2021-08-01 (the dataset start). Day 0 = Aug 1, 2021.
 
 Run: python scripts/build_data.py [path_to_csv]
 Defaults to ./data/carsandbids_master.csv (relative to the repo root).
@@ -17,17 +19,24 @@ Defaults to ./data/carsandbids_master.csv (relative to the repo root).
 import json
 import os
 import sys
+from datetime import date as date_type
 from pathlib import Path
 
 import pandas as pd
 
 EPOCH_YEAR = 2021
 EPOCH_MONTH = 8  # August
+EPOCH_DATE = date_type(2021, 8, 1)
 
 
 def month_offset(dt) -> int:
     """Months since epoch (Aug 2021)."""
     return (dt.year - EPOCH_YEAR) * 12 + (dt.month - EPOCH_MONTH)
+
+
+def day_offset(dt) -> int:
+    """Days since epoch (Aug 1, 2021). Used for daily/weekly granularity in the Trends tab."""
+    return (dt.date() - EPOCH_DATE).days
 
 
 def normalize_transmission(value) -> str:
@@ -91,6 +100,7 @@ def build(csv_path: Path, output_path: Path) -> None:
             body_ix.get(safe_str(r.get("body_style")), 0),
             normalize_transmission(r.get("transmission")),
             month_offset(r["end_date"]),
+            day_offset(r["end_date"]),  # field 12 — days since epoch, for daily/weekly chart granularity
         ]
         records.append(record)
 
@@ -108,7 +118,7 @@ def build(csv_path: Path, output_path: Path) -> None:
         "total_gmv": gmv,
         "months_total": months_total,
         "epoch": f"{EPOCH_YEAR}-{EPOCH_MONTH:02d}",
-        "schema_version": 1,
+        "schema_version": 2,
         "field_index": {
             "year": 0,
             "make_ix": 1,
@@ -122,6 +132,7 @@ def build(csv_path: Path, output_path: Path) -> None:
             "body_ix": 9,
             "transmission": 10,
             "month_offset": 11,
+            "day_offset": 12,
         },
     }
 

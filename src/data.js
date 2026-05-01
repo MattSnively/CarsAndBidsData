@@ -5,7 +5,7 @@
    - Computes aggregates for every chart
    ============================================================ */
 
-import { PRICE_BANDS, monthLabel } from "./tokens.js";
+import { PRICE_BANDS, monthLabel, dayLabel, weekLabel } from "./tokens.js";
 
 // Field indices in the packed record array
 export const FIELD = {
@@ -21,6 +21,7 @@ export const FIELD = {
   bs: 9,
   tx: 10,
   mo: 11,
+  dy: 12, // days since epoch (Aug 1, 2021) — used for daily/weekly chart granularity
 };
 
 // Module-level data, populated by loadData()
@@ -225,6 +226,69 @@ export function computeByMonth(records) {
     avgPrice: m.sold > 0 ? m.gmv / m.sold : 0,
     avgBids: m.listings > 0 ? m.bids / m.listings : 0,
   }));
+}
+
+/**
+ * Weekly aggregation — groups by floor(dayOffset / 7). Used when monthRange
+ * spans 2-3 months. Produces ~8-13 data points for a readable chart.
+ */
+export function computeByWeek(records) {
+  const map = new Map();
+  for (const r of records) {
+    const wo = Math.floor(r[FIELD.dy] / 7); // week offset from epoch
+    let w = map.get(wo);
+    if (!w) {
+      w = { wo, listings: 0, sold: 0, gmv: 0, bids: 0 };
+      map.set(wo, w);
+    }
+    w.listings++;
+    w.bids += r[FIELD.b];
+    if (r[FIELD.s] === 1) {
+      w.sold++;
+      w.gmv += r[FIELD.p];
+    }
+  }
+  return [...map.values()]
+    .sort((a, b) => a.wo - b.wo)
+    .map((w) => ({
+      ...w,
+      // Use "month" as the label key so TrendsTab XAxis / tooltips work unchanged
+      month: weekLabel(w.wo),
+      str: w.listings > 0 ? (w.sold / w.listings) * 100 : 0,
+      avgPrice: w.sold > 0 ? w.gmv / w.sold : 0,
+      avgBids: w.listings > 0 ? w.bids / w.listings : 0,
+    }));
+}
+
+/**
+ * Daily aggregation — groups by dayOffset. Used when monthRange spans exactly
+ * 1 month. Produces ~20 data points (weekday-only auction schedule).
+ */
+export function computeByDay(records) {
+  const map = new Map();
+  for (const r of records) {
+    const dy = r[FIELD.dy];
+    let d = map.get(dy);
+    if (!d) {
+      d = { dy, listings: 0, sold: 0, gmv: 0, bids: 0 };
+      map.set(dy, d);
+    }
+    d.listings++;
+    d.bids += r[FIELD.b];
+    if (r[FIELD.s] === 1) {
+      d.sold++;
+      d.gmv += r[FIELD.p];
+    }
+  }
+  return [...map.values()]
+    .sort((a, b) => a.dy - b.dy)
+    .map((d) => ({
+      ...d,
+      month: dayLabel(d.dy),
+      str: d.listings > 0 ? (d.sold / d.listings) * 100 : 0,
+      avgPrice: d.sold > 0 ? d.gmv / d.sold : 0,
+      avgBids: d.listings > 0 ? d.bids / d.listings : 0,
+    }));
 }
 
 /**

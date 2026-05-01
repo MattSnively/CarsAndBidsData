@@ -13,7 +13,13 @@ import {
 
 import { Card, CardHeader } from "../components/Primitives.jsx";
 import { useFilters } from "../components/FilterContext.jsx";
-import { applyAllFilters, applyUniverseFilters, computeByMonth } from "../data.js";
+import {
+  applyAllFilters,
+  applyUniverseFilters,
+  computeByMonth,
+  computeByWeek,
+  computeByDay,
+} from "../data.js";
 import {
   GRAY_100,
   GRAY_200,
@@ -27,18 +33,44 @@ import {
   fmtN,
 } from "../tokens.js";
 
+/**
+ * Choose chart granularity based on how many months the monthRange filter spans.
+ *   1 month  → daily   (~20 weekday-auction data points)
+ *   2-3 months → weekly  (~8-13 data points)
+ *   4+ months  → monthly (default behavior)
+ */
+function pickGranularity(monthRange) {
+  if (!monthRange) return "month";
+  const span = monthRange[1] - monthRange[0] + 1;
+  if (span <= 1) return "day";
+  if (span <= 3) return "week";
+  return "month";
+}
+
+function computeSeries(records, granularity) {
+  if (granularity === "day") return computeByDay(records);
+  if (granularity === "week") return computeByWeek(records);
+  return computeByMonth(records);
+}
+
 export function TrendsTab({ drillMetric, setDrillMetric }) {
   const { filters, setFilters } = useFilters();
+
+  // Granularity: day / week / month — derived from current monthRange span
+  const granularity = pickGranularity(filters.monthRange);
 
   // STR-bearing series uses universe; price-band-aware metrics use full filter
   const universeRecords = useMemo(() => applyUniverseFilters(filters), [filters]);
   const allFilteredRecords = useMemo(() => applyAllFilters(filters), [filters]);
 
   const monthlyUniverse = useMemo(
-    () => computeByMonth(universeRecords),
-    [universeRecords],
+    () => computeSeries(universeRecords, granularity),
+    [universeRecords, granularity],
   );
-  const monthlyAll = useMemo(() => computeByMonth(allFilteredRecords), [allFilteredRecords]);
+  const monthlyAll = useMemo(
+    () => computeSeries(allFilteredRecords, granularity),
+    [allFilteredRecords, granularity],
+  );
 
   const metrics = [
     {
@@ -99,11 +131,18 @@ export function TrendsTab({ drillMetric, setDrillMetric }) {
   }
 
   const latest = series[series.length - 1];
-  const yearAgo = series.length >= 13 ? series[series.length - 13] : series[0];
+  // Year-over-year only makes sense in monthly granularity (13 months back).
+  // In daily/weekly mode, show a comparison to the first period in the window instead.
+  const compIdx = granularity === "month" && series.length >= 13 ? series.length - 13 : 0;
+  const yearAgo = series[compIdx];
   const delta =
     yearAgo[active.key] !== 0
       ? ((latest[active.key] - yearAgo[active.key]) / yearAgo[active.key]) * 100
       : 0;
+  const yoyLabel =
+    granularity === "month" ? "Year-over-year" :
+    granularity === "week"  ? "vs. first week" :
+                              "vs. first day";
 
   const values = series.map((m) => m[active.key]).filter((v) => !isNaN(v));
   const peak = Math.max(...values);
@@ -119,7 +158,8 @@ export function TrendsTab({ drillMetric, setDrillMetric }) {
             className="text-[11px] font-semibold uppercase tracking-[0.1em] mb-1"
             style={{ color: GRAY_500 }}
           >
-            Monthly trends · {series.length}-month series
+            {granularity === "month" ? "Monthly" : granularity === "week" ? "Weekly" : "Daily"} trends · {series.length}{" "}
+            {granularity === "month" ? "months" : granularity === "week" ? "weeks" : "days"}
           </div>
           <div className="text-[22px] font-bold tracking-tight" style={{ color: INK }}>
             Where the platform is moving
@@ -163,7 +203,7 @@ export function TrendsTab({ drillMetric, setDrillMetric }) {
         <Card>
           <div className="px-5 py-4">
             <div className="text-[11px] mb-2" style={{ color: GRAY_500 }}>
-              Year-over-year
+              {yoyLabel}
             </div>
             <div
               className="text-[24px] font-bold tracking-tight flex items-center gap-2"
@@ -213,7 +253,7 @@ export function TrendsTab({ drillMetric, setDrillMetric }) {
       <Card className="mb-3">
         <CardHeader
           title={active.label}
-          sub="Click a month to scope the dashboard to that window"
+          sub={granularity === "month" ? "Click a month to scope the dashboard to that window" : "Zoomed view — clear time scope to return to monthly"}
           right={
             filters.monthRange && (
               <button
@@ -232,11 +272,14 @@ export function TrendsTab({ drillMetric, setDrillMetric }) {
               data={series}
               margin={{ top: 10, right: 15, left: 5, bottom: 5 }}
               onClick={(e) => {
-                if (e?.activePayload?.[0]) {
+                // In monthly view only — clicking a bar scopes the dashboard to that month.
+                // In daily/weekly view there's nowhere useful to further narrow.
+                if (granularity === "month" && e?.activePayload?.[0]) {
                   const m = e.activePayload[0].payload;
                   setFilters((f) => ({ ...f, monthRange: [m.mo, m.mo] }));
                 }
               }}
+              style={{ cursor: granularity === "month" ? "pointer" : "default" }}
             >
               <defs>
                 <linearGradient id="trendfill" x1="0" y1="0" x2="0" y2="1">

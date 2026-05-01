@@ -90,3 +90,18 @@ export const monthLabel = (offset) => {
   const month = total % 12;
   return `${MONTH_NAMES[month]}'${String(year).slice(2)}`;
 };
+
+// Epoch anchor for day/week offset labels (Aug 1, 2021 = day 0)
+const EPOCH_MS = Date.UTC(2021, 7, 1); // month is 0-indexed
+
+/** Day offset → "Jan 15" */
+export const dayLabel = (offset) => {
+  const d = new Date(EPOCH_MS + offset * 86_400_000);
+  return `${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCDate()}`;
+};
+
+/** Week offset (floor(dayOffset/7)) → "Jan 13" (first day of that week) */
+export const weekLabel = (offset) => {
+  const d = new Date(EPOCH_MS + offset * 7 * 86_400_000);
+  return `${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCDate()}`;
+};
