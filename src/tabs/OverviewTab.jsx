@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -23,6 +23,7 @@ import {
   applyUniverseFilters,
   computeByMake,
   computeByMonth,
+  computeByMonthSplit,
   computeKPIsSplit,
   computePriceDist,
   computeReserveSplit,
@@ -46,14 +47,16 @@ import {
 
 export function OverviewTab({ setTab, setDrillMetric }) {
   const { filters, setFilters } = useFilters();
+  const [showAllMakes, setShowAllMakes] = useState(false);
 
   /* ── Filter sets ─────────────────────────────────────────────
-     universe = all filters EXCEPT price band (used for STR-bearing data)
-     all      = all filters including price band (used for sold-only views)
-     no-make  = universe minus the makes filter (so the by-make chart still
-                shows the full top-10 with the user's selection highlighted)
-     no-band  = universe (price-dist chart with selection highlighted)
-     no-rsv   = universe minus reserve (so both reserve tiles stay visible)
+     universe    = all filters EXCEPT price band (used for STR-bearing data)
+     all         = all filters including price band (used for sold-only views)
+     no-make     = all filters (incl. price band) minus makes, so the by-make
+                   chart shows all makes with the user's selection highlighted
+                   AND reacts to price-band selection.
+     no-reserve  = all filters (incl. price band) minus reserve, so both
+                   reserve tiles stay visible AND react to price-band selection.
   ──────────────────────────────────────────────────────────── */
   const universeRecords = useMemo(
     () => applyUniverseFilters(filters),
@@ -63,12 +66,15 @@ export function OverviewTab({ setTab, setDrillMetric }) {
     () => applyAllFilters(filters),
     [filters],
   );
+  // Use applyAllFilters (not applyUniverseFilters) so these datasets respond
+  // to priceBands selection. When priceBands is empty, applyAllFilters is
+  // identical to applyUniverseFilters (passesPriceBand returns true for all).
   const noMakeUniverse = useMemo(
-    () => applyUniverseFilters({ ...filters, makes: [] }),
+    () => applyAllFilters({ ...filters, makes: [] }),
     [filters],
   );
   const noReserveUniverse = useMemo(
-    () => applyUniverseFilters({ ...filters, reserve: null }),
+    () => applyAllFilters({ ...filters, reserve: null }),
     [filters],
   );
 
@@ -78,10 +84,17 @@ export function OverviewTab({ setTab, setDrillMetric }) {
     [universeRecords, soldFilteredRecords],
   );
 
-  const byMake = useMemo(() => computeByMake(noMakeUniverse, 10), [noMakeUniverse]);
+  // topN toggles between 10 (default) and 0 (all) based on showAllMakes.
+  // computeByMake treats topN=0 as falsy and returns the full sorted array.
+  const byMake = useMemo(
+    () => computeByMake(noMakeUniverse, showAllMakes ? 0 : 10),
+    [noMakeUniverse, showAllMakes],
+  );
+  // computeByMonthSplit keeps STR from the universe (unaffected by price bands)
+  // while GMV reflects the price-band-filtered sold set.
   const byMonth = useMemo(
-    () => computeByMonth(universeRecords).slice(-12),
-    [universeRecords],
+    () => computeByMonthSplit(universeRecords, soldFilteredRecords).slice(-12),
+    [universeRecords, soldFilteredRecords],
   );
   // Price dist always shows the full distribution (universe), highlighting selected bands
   const priceDist = useMemo(() => computePriceDist(universeRecords), [universeRecords]);
@@ -210,8 +223,23 @@ export function OverviewTab({ setTab, setDrillMetric }) {
 
       <div className="grid grid-cols-2 gap-3 mb-3">
         <Card>
-          <CardHeader title="Volume by Make" sub="Click any make to filter · top 10 by cars sold" />
-          <div className="px-5 pb-5 pt-2">
+          <CardHeader
+            title="Volume by Make"
+            sub={`Click any make to filter · ${showAllMakes ? "all makes" : "top 10 by cars sold"}`}
+            right={
+              <button
+                onClick={() => setShowAllMakes((v) => !v)}
+                className="text-[11px] font-medium hover:underline"
+                style={{ color: LIME_DEEP }}
+              >
+                {showAllMakes ? "Top 10" : "Show all"}
+              </button>
+            }
+          />
+          <div
+            className="px-5 pb-5 pt-2"
+            style={showAllMakes ? { maxHeight: 380, overflowY: "auto" } : {}}
+          >
             {byMake.length === 0 && (
               <div className="text-[12px] py-6 text-center" style={{ color: GRAY_500 }}>
                 No data

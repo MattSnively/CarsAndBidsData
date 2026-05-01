@@ -227,6 +227,59 @@ export function computeByMonth(records) {
   }));
 }
 
+/**
+ * Monthly aggregation that keeps STR and listing counts from the universe
+ * (so STR is never distorted by a price-band filter) while computing GMV
+ * and avgPrice from the sold-side filtered set (so those metrics respond
+ * to price-band selection). This mirrors the split used in computeKPIsSplit.
+ *
+ * Used by the STR vs GMV chart on the Overview tab.
+ */
+export function computeByMonthSplit(universeRecords, soldRecords) {
+  // Build the universe map: listings, sold count, bids for STR calculation
+  const uMap = new Map();
+  for (const r of universeRecords) {
+    const mo = r[FIELD.mo];
+    let m = uMap.get(mo);
+    if (!m) {
+      m = { mo, listings: 0, sold: 0, bids: 0 };
+      uMap.set(mo, m);
+    }
+    m.listings++;
+    m.bids += r[FIELD.b];
+    if (r[FIELD.s] === 1) m.sold++;
+  }
+  // Build the sold-side map: GMV from only the price-band-filtered sold records
+  const sMap = new Map();
+  for (const r of soldRecords) {
+    if (r[FIELD.s] !== 1) continue;
+    const mo = r[FIELD.mo];
+    let m = sMap.get(mo);
+    if (!m) {
+      m = { gmv: 0, soldCount: 0 };
+      sMap.set(mo, m);
+    }
+    m.gmv += r[FIELD.p];
+    m.soldCount++;
+  }
+  // Merge: STR comes from the universe, GMV/avgPrice from the sold-side
+  return [...uMap.values()]
+    .sort((a, b) => a.mo - b.mo)
+    .map((u) => {
+      const s = sMap.get(u.mo) ?? { gmv: 0, soldCount: 0 };
+      return {
+        mo: u.mo,
+        month: monthLabel(u.mo),
+        listings: u.listings,
+        sold: u.sold,
+        str: u.listings > 0 ? (u.sold / u.listings) * 100 : 0,
+        gmv: s.gmv,
+        avgPrice: s.soldCount > 0 ? s.gmv / s.soldCount : 0,
+        avgBids: u.listings > 0 ? u.bids / u.listings : 0,
+      };
+    });
+}
+
 export function computePriceDist(records) {
   // Price distribution shows sold listings only — that's its inherent definition
   const counts = PRICE_BANDS.map((b) => ({ ...b, count: 0 }));
