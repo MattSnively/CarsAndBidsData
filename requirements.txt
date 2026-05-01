@@ -1,0 +1,12 @@
+# Python dependencies for the data pipeline.
+#
+# Used by:
+#   scripts/build_data.py             — pandas (CSV reader, data shaping)
+#   scripts/carsandbids_scraper_7day.py — pandas + playwright (browser automation)
+#
+# After `pip install -r requirements.txt`, install the Chromium browser
+# the scraper drives:
+#     python -m playwright install chromium
+
+pandas>=2.0.0
+playwright>=1.40.0

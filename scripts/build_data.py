@@ -1,5 +1,5 @@
 """
-Build the dashboard data file from carsandbids_master.xlsx.
+Build the dashboard data file from data/carsandbids_master.csv.
 
 Output: public/data/auctions.json
 Format: { makes: [...], bodies: [...], records: [[...], ...], meta: {...} }
@@ -10,8 +10,8 @@ Each record is a 12-element array:
 
 monthOffset: months since 2021-08 (the dataset start). Month 0 = Aug 2021.
 
-Run: python scripts/build_data.py [path_to_xlsx]
-Defaults to ./carsandbids_master.xlsx in the current working directory.
+Run: python scripts/build_data.py [path_to_csv]
+Defaults to ./data/carsandbids_master.csv (relative to the repo root).
 """
 
 import json
@@ -58,9 +58,11 @@ def safe_str(value, default: str = "", max_len: int | None = None) -> str:
     return s
 
 
-def build(xlsx_path: Path, output_path: Path) -> None:
-    print(f"Reading {xlsx_path}...")
-    df = pd.read_excel(xlsx_path)
+def build(csv_path: Path, output_path: Path) -> None:
+    # Read the master CSV. CSV is the canonical on-disk format for the
+    # source data; the dashboard only consumes the packed JSON written below.
+    print(f"Reading {csv_path}...")
+    df = pd.read_csv(csv_path)
     df["end_date"] = pd.to_datetime(df["end_date"], errors="coerce")
     before = len(df)
     df = df.dropna(subset=["end_date"]).copy()
@@ -145,28 +147,31 @@ def build(xlsx_path: Path, output_path: Path) -> None:
 
 
 def main():
+    # Optional first argument: explicit path to a master CSV. If omitted,
+    # we look in the conventional locations (CWD or the repo's data/ folder).
     args = sys.argv[1:]
     if args:
-        xlsx_path = Path(args[0])
+        csv_path = Path(args[0])
     else:
-        # Default: look in CWD or repo root
+        repo_root = Path(__file__).resolve().parent.parent
         candidates = [
-            Path.cwd() / "carsandbids_master.xlsx",
-            Path(__file__).resolve().parent.parent / "carsandbids_master.xlsx",
+            Path.cwd() / "carsandbids_master.csv",
+            Path.cwd() / "data" / "carsandbids_master.csv",
+            repo_root / "data" / "carsandbids_master.csv",
         ]
-        xlsx_path = next((p for p in candidates if p.exists()), None)
-        if xlsx_path is None:
-            print("ERROR: carsandbids_master.xlsx not found.", file=sys.stderr)
+        csv_path = next((p for p in candidates if p.exists()), None)
+        if csv_path is None:
+            print("ERROR: carsandbids_master.csv not found.", file=sys.stderr)
             print("Pass the path as the first argument: python scripts/build_data.py <path>", file=sys.stderr)
             sys.exit(1)
 
-    if not xlsx_path.exists():
-        print(f"ERROR: {xlsx_path} does not exist.", file=sys.stderr)
+    if not csv_path.exists():
+        print(f"ERROR: {csv_path} does not exist.", file=sys.stderr)
         sys.exit(1)
 
     repo_root = Path(__file__).resolve().parent.parent
     output_path = repo_root / "public" / "data" / "auctions.json"
-    build(xlsx_path, output_path)
+    build(csv_path, output_path)
 
 
 if __name__ == "__main__":
