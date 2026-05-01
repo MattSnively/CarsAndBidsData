@@ -1,0 +1,101 @@
+name: Weekly scrape
+
+# Cron runs every Saturday at 12:00 UTC (= 07:00 ET / 08:00 EDT). Cars & Bids
+# auctions end Mon–Fri 1–5pm ET, so by Saturday morning the prior week is
+# fully settled. workflow_dispatch lets us trigger manually for smoke tests.
+on:
+  schedule:
+    - cron: "0 12 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed for the auto-commit step
+  actions: write    # needed to trigger the Deploy workflow via gh workflow run
+
+# One scrape at a time. Don't cancel an in-flight run if a new one starts;
+# we'd rather let the running job finish than lose its progress mid-scrape.
+concurrency:
+  group: weekly-scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # --with-deps installs OS libs Chromium needs (libnss, libatk, etc.)
+      # without us managing them by hand.
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
+      # Scrape the prior 7 days. The scraper writes weekly_update.csv and
+      # weekly_update.xlsx in the working directory. If the scraper finds
+      # zero listings in the window, it prints "No data to export" and
+      # writes nothing — the next step handles that case.
+      - name: Run 7-day scraper
+        run: python scripts/carsandbids_scraper_7day.py --days 7 --output weekly_update
+
+      # Merge into master. If the scraper produced no CSV, short-circuit
+      # cleanly — emit added=0 so the downstream gate skips the rebuild
+      # and commit steps.
+      - name: Merge into master CSV
+        id: merge
+        run: |
+          if [ ! -f weekly_update.csv ]; then
+            echo "Scraper produced no output (zero listings in window)."
+            echo "added=0" >> "$GITHUB_OUTPUT"
+            echo "skipped=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python scripts/merge_master.py weekly_update.csv data/carsandbids_master.csv
+
+      # Rebuild the packed JSON only if merge added at least one new row.
+      - name: Rebuild packed JSON
+        if: steps.merge.outputs.added != '0'
+        run: python scripts/build_data.py
+
+      # Commit and push the data changes back to main.
+      - name: Commit and push if changed
+        if: steps.merge.outputs.added != '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/carsandbids_master.csv public/data/auctions.json
+          git commit -m "Weekly data update $(date -u +%Y-%m-%d) (${{ steps.merge.outputs.added }} new listings)"
+          git push
+
+      # Pushes authored by GITHUB_TOKEN do NOT auto-trigger downstream
+      # workflows (a security default). So we manually fire the Deploy
+      # workflow via workflow_dispatch — that re-runs vite build + Pages
+      # deploy with the freshly-committed auctions.json.
+      - name: Trigger Deploy workflow
+        if: steps.merge.outputs.added != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run "Deploy to GitHub Pages" --ref main
+
+      # Summary surfaced on the workflow run page so we can see at a glance
+      # what happened without digging through logs.
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### Weekly scrape summary"
+            echo ""
+            echo "- New listings added: ${{ steps.merge.outputs.added || 'unknown (scrape may have failed before merge)' }}"
+            echo "- Duplicates skipped: ${{ steps.merge.outputs.skipped || 'n/a' }}"
+            echo "- Run time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_STEP_SUMMARY"

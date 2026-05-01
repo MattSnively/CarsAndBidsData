@@ -67,7 +67,7 @@ carsandbids.com
    │  (Playwright scraper, scripts/carsandbids_scraper_7day.py)
    ▼
 weekly_update.csv  (transient, gitignored)
-   │  (manual dedupe + append by url)
+   │  (scripts/merge_master.py — dedupes by url, aligns to master schema)
    ▼
 data/carsandbids_master.csv  (committed source of truth, ~29 MB)
    │  (scripts/build_data.py)
@@ -85,62 +85,65 @@ documented at the top of `scripts/build_data.py`.
 
 ## Updating the data
 
-To refresh the dashboard with newly-ended auctions:
+The dashboard self-updates weekly. The
+[Weekly scrape workflow](.github/workflows/weekly-scrape.yml) runs every
+Saturday at 12:00 UTC (07:00 ET / 08:00 EDT — after Friday's last 5pm-ET
+auction has settled) and:
 
-### 1. Install Python dependencies (one-time)
+1. Scrapes the last 7 days of past auctions with the Playwright scraper
+2. Merges new (deduped-by-`url`) listings into `data/carsandbids_master.csv`
+3. Rebuilds `public/data/auctions.json`
+4. Commits both files back to `main` with a message like
+   `Weekly data update 2026-05-04 (87 new listings)`
+5. Triggers the Deploy workflow so the live dashboard reflects the new data
+
+GitHub emails the repo owner if any step fails. The master CSV is the
+source of truth — the auto-commit always preserves existing rows and only
+adds new ones.
+
+### Triggering manually
+
+To run an off-schedule scrape (e.g., to test changes or catch up after a
+failed run):
 
 ```bash
+gh workflow run "Weekly scrape" --ref main
+```
+
+Or use the **Run workflow** button on the
+[workflow page](https://github.com/MattSnively/CarsAndBidsData/actions/workflows/weekly-scrape.yml).
+
+### Manual fallback (if the workflow is broken)
+
+```bash
+# 1. Install deps once
 pip install -r requirements.txt
 python -m playwright install chromium
-```
 
-### 2. Scrape the last N days
-
-```bash
-# Default output: weekly_update.csv (last 7 days)
+# 2. Scrape, merge, rebuild
 python scripts/carsandbids_scraper_7day.py --days 7 --output weekly_update
-```
-
-The scraper is rate-limited at 1.5s per detail page (don't lower this — it
-respects carsandbids.com). Expect ~2 minutes per 50 listings.
-
-### 3. Merge new listings into the master CSV
-
-For now this is a manual deduplicate-and-append step (use Excel, pandas,
-or a quick Python script — drop rows whose `url` already appears in
-`data/carsandbids_master.csv`, then concat the rest).
-
-A merge helper script will land in a future change.
-
-### 4. Rebuild the packed JSON
-
-```bash
+python scripts/merge_master.py weekly_update.csv data/carsandbids_master.csv
 python scripts/build_data.py
-```
 
-This reads `data/carsandbids_master.csv` and overwrites
-`public/data/auctions.json`.
-
-### 5. Commit and push
-
-```bash
+# 3. Commit and push (auto-triggers deploy)
 git add data/carsandbids_master.csv public/data/auctions.json
-git commit -m "Update auction data (week of YYYY-MM-DD)"
+git commit -m "Manual data update $(date +%Y-%m-%d)"
 git push
 ```
-
-GitHub Actions auto-deploys on push to `main`.
 
 ## Project structure
 
 ```
 .
-├── .github/workflows/deploy.yml         ← CI/CD (build + deploy to Pages)
+├── .github/workflows/
+│   ├── deploy.yml                       ← build + deploy to Pages on push to main
+│   └── weekly-scrape.yml                ← Saturday cron: scrape → merge → rebuild → deploy
 ├── data/carsandbids_master.csv          ← source of truth (committed)
 ├── public/data/auctions.json            ← packed dataset (committed, built artifact)
 ├── scripts/
 │   ├── build_data.py                    ← master CSV → packed JSON
-│   └── carsandbids_scraper_7day.py      ← Playwright scraper (incremental)
+│   ├── carsandbids_scraper_7day.py      ← Playwright scraper (incremental)
+│   └── merge_master.py                  ← dedup-and-append into master CSV
 ├── src/
 │   ├── App.jsx                          ← root, data loading + tab state
 │   ├── main.jsx                         ← React entry point
