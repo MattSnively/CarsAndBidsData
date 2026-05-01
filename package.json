@@ -1,0 +1,29 @@
+{
+  "name": "carsandbidsdata",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "homepage": "https://mattsnively.github.io/CarsAndBidsData/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MattSnively/CarsAndBidsData.git"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "build-data": "python scripts/build_data.py"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "vite": "^5.4.8"
+  }
+}

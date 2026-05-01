@@ -1,0 +1,10 @@
+node_modules
+dist
+*.log
+.DS_Store
+.vite
+.vscode
+.env.local
+
+# Source data — keep the xlsx out of git; ship only the built JSON
+carsandbids_master.xlsx
