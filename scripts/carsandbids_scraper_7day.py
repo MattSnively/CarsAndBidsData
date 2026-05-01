@@ -170,6 +170,32 @@ class CarsAndBidsScraper:
             print(f"Could not determine total pages: {e}")
             return 1
 
+    async def _dismiss_modal(self):
+        """
+        Dismiss any open modal (e.g. C&B's sign-up prompt) so it doesn't
+        block pagination clicks. Tries Escape first, then an explicit close
+        button. No-ops if no modal is open.
+        """
+        try:
+            modal = await self.page.query_selector('div[role="dialog"].modal.show')
+            if not modal:
+                return
+            # Try pressing Escape to close
+            await self.page.keyboard.press("Escape")
+            await asyncio.sleep(0.5)
+            # Verify it's gone; if not, click the close button directly
+            modal = await self.page.query_selector('div[role="dialog"].modal.show')
+            if modal:
+                close_btn = await self.page.query_selector(
+                    'div[role="dialog"].modal.show button.close, '
+                    'div[role="dialog"].modal.show [aria-label="Close"]'
+                )
+                if close_btn:
+                    await close_btn.click()
+                    await asyncio.sleep(0.5)
+        except Exception:
+            pass  # If dismissal fails, let the Next click attempt proceed anyway
+
     async def scrape_listing_page(self, cutoff_date: datetime = None) -> tuple:
         """
         Scrape all listings from current page.
@@ -479,6 +505,10 @@ class CarsAndBidsScraper:
                 # Navigate to next page if not last
                 if page_num < pages_to_scrape:
                     try:
+                        # Dismiss any modal that may be blocking the Next button
+                        # (C&B shows a sign-up modal after a couple of pages)
+                        await self._dismiss_modal()
+
                         next_btn = await self.page.query_selector('button:has-text("Next")')
                         if next_btn and await next_btn.is_enabled():
                             await next_btn.click()
