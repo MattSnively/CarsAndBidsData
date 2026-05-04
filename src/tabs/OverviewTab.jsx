@@ -55,6 +55,22 @@ function ScatterPanel({ scatterPts, filters, height, selectedPoint, onPointClick
   const multiMake = filters.makes.length >= 2;
   const byMake = multiMake ? groupScatterByMake(scatterPts) : null;
 
+  // Derive axis ceilings directly from the filtered data. Recharts' dataMax callback
+  // on ScatterChart does not reliably recalculate when data changes after a filter
+  // update, leaving axes anchored to the all-data maximum and wasting whitespace.
+  const yDomainMax = useMemo(() => {
+    if (!scatterPts.length) return 100000;
+    const maxPrice = Math.max(...scatterPts.map((p) => p.price));
+    return Math.ceil((maxPrice * 1.1) / 10000) * 10000;
+  }, [scatterPts]);
+
+  const xDomainMax = useMemo(() => {
+    if (filters.mileageMax) return filters.mileageMax * 1.05;
+    if (!scatterPts.length) return 100000;
+    const maxMileage = Math.max(...scatterPts.map((p) => p.mileage));
+    return Math.ceil((maxMileage * 1.1) / 5000) * 5000;
+  }, [scatterPts, filters.mileageMax]);
+
   const scatterTooltip = ({ active, payload }) => {
     if (!active || !payload?.length) return null;
     const d = payload[0].payload;
@@ -110,7 +126,7 @@ function ScatterPanel({ scatterPts, filters, height, selectedPoint, onPointClick
             tickLine={false}
             tick={{ fill: GRAY_500, fontSize: 10 }}
             tickFormatter={(v) => `${v >= 1000 ? (v / 1000).toFixed(0) + "k" : v}`}
-            domain={[0, filters.mileageMax ? filters.mileageMax * 1.05 : 250000]}
+            domain={[0, xDomainMax]}
           />
           <YAxis
             dataKey="price"
@@ -119,7 +135,7 @@ function ScatterPanel({ scatterPts, filters, height, selectedPoint, onPointClick
             tickLine={false}
             tick={{ fill: GRAY_500, fontSize: 10 }}
             tickFormatter={(v) => `${v >= 1000 ? (v / 1000).toFixed(0) + "k" : v}`}
-            domain={[0, 300000]}
+            domain={[0, yDomainMax]}
           />
           <Tooltip content={scatterTooltip} cursor={{ strokeDasharray: "2 2" }} />
           {multiMake
