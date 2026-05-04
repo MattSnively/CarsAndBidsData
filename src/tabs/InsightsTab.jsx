@@ -237,7 +237,7 @@ export function InsightsTab() {
     setSelectedMake((prev) => (prev === make ? null : make));
 
   return (
-    <div className="px-6 py-5">
+    <div className="px-3 md:px-6 py-4 md:py-5">
 
       {/* ══ 1. INTRO BLOCK ═══════════════════════════════════════════════════ */}
       <div className="mb-6">
@@ -267,7 +267,7 @@ export function InsightsTab() {
       </div>
 
       {/* ══ 2. KPI CARDS ═════════════════════════════════════════════════════ */}
-      <div className="grid grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <KpiCard
           label="Reserve Auctions (slice of all listings)"
           value={`${headline.reservePct.toFixed(0)}%`}
@@ -353,7 +353,7 @@ export function InsightsTab() {
         {/* ── View A: Volume & Fail Rate — stacked bar + fail rate line ──────── */}
         {activeChart === "volume" && (
           <>
-            <div className="px-3 pb-2 pt-1" style={{ height: 280 }}>
+            <div className="px-3 pb-2 pt-1 h-[200px] md:h-[280px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData} margin={{ top: 10, right: 50, left: 0, bottom: 5 }}>
                   <CartesianGrid stroke={GRAY_100} vertical={false} />
@@ -471,7 +471,7 @@ export function InsightsTab() {
 
         {/* ── View B: Reserve fail rate by car model year ─────────────────────── */}
         {activeChart === "modelYear" && (
-          <div className="px-3 pb-4 pt-1" style={{ height: 300 }}>
+          <div className="px-3 pb-4 pt-1 h-[220px] md:h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={byModelYear} margin={{ top: 10, right: 20, left: 0, bottom: 40 }}>
                 <CartesianGrid stroke={GRAY_100} vertical={false} />
@@ -529,7 +529,7 @@ export function InsightsTab() {
 
         {/* ── View C: Ford Mustang reserve fail rate by mileage bucket ─────── */}
         {activeChart === "mileage" && (
-          <div className="px-3 pb-4 pt-1" style={{ height: 280 }}>
+          <div className="px-3 pb-4 pt-1 h-[200px] md:h-[280px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={mustangMileage.rows} margin={{ top: 10, right: 20, left: 0, bottom: 5 }}>
                 <CartesianGrid stroke={GRAY_100} vertical={false} />
@@ -637,7 +637,7 @@ export function InsightsTab() {
                   <div
                     className="text-right text-[12px] truncate flex-shrink-0"
                     style={{
-                      width: 110,
+                      width: "clamp(70px, 18vw, 110px)",
                       color: isExpanded ? INK : GRAY_700,
                       fontWeight: isExpanded ? 600 : 400,
                     }}
@@ -667,7 +667,7 @@ export function InsightsTab() {
                       </div>
                       <div className="text-[9.5px]" style={{ color: GRAY_500 }}>failed</div>
                     </div>
-                    <div className="text-right" style={{ width: 48 }}>
+                    <div className="hidden md:block text-right" style={{ width: 48 }}>
                       <div
                         className="text-[11px] font-semibold tabular-nums"
                         style={{ color: row.failRate >= 50 ? RED : GRAY_700 }}
@@ -761,7 +761,7 @@ export function InsightsTab() {
       </div>
 
       {/* Pattern selector cards */}
-      <div className="grid grid-cols-3 gap-3 mb-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
         {PATTERNS.map((p) => {
           const isSelected = selectedPattern === p.id;
           return (
@@ -803,7 +803,7 @@ export function InsightsTab() {
           <div className="px-5 pt-5 pb-5">
 
             {/* Signal + Intervention — 2 columns */}
-            <div className="grid grid-cols-2 gap-6 mb-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 mb-5">
 
               {/* Left: The Signal */}
               <div>
@@ -876,7 +876,7 @@ export function InsightsTab() {
                 No examples match this pattern with current filters.
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {/* Sold benchmark card — anchors pricing expectations */}
                 {patternExamples.sold && (
                   <div

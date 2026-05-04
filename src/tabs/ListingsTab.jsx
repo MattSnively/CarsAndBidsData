@@ -106,8 +106,8 @@ export function ListingsTab() {
   }, [rows, makes]);
 
   return (
-    <div className="px-6 py-5">
-      <div className="flex items-end justify-between mb-4">
+    <div className="px-3 md:px-6 py-4 md:py-5">
+      <div className="flex flex-col md:flex-row md:items-end justify-between mb-4 gap-3">
         <div>
           <div
             className="text-[11px] font-semibold uppercase tracking-[0.1em] mb-1"
@@ -125,7 +125,7 @@ export function ListingsTab() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search make, model, year..."
-              className="pl-8 pr-3 py-1.5 text-[12px] w-[240px] outline-none"
+              className="pl-8 pr-3 py-1.5 text-[12px] w-full md:w-[240px] outline-none"
               style={{ border: `1px solid ${GRAY_200}`, borderRadius: 4, color: INK }}
             />
             <svg
@@ -147,7 +147,7 @@ export function ListingsTab() {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-3 mb-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
         <Card>
           <div className="px-4 py-3">
             <div className="text-[11px]" style={{ color: GRAY_500 }}>
@@ -190,8 +190,9 @@ export function ListingsTab() {
         </Card>
       </div>
 
+      <div className="overflow-x-auto">
       <Card>
-        <table className="w-full border-collapse">
+        <table className="w-full border-collapse" style={{ minWidth: 640 }}>
           <thead>
             <tr className="border-b" style={{ borderColor: GRAY_200 }}>
               <SortHeader label="Year" field="yr" />
@@ -299,6 +300,7 @@ export function ListingsTab() {
           </tbody>
         </table>
       </Card>
+      </div>
 
       {totalPages > 1 && (
         <div

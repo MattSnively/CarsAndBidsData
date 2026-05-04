@@ -153,8 +153,8 @@ export function TrendsTab({ drillMetric, setDrillMetric }) {
   const troughMonth = series.find((m) => m[active.key] === trough);
 
   return (
-    <div className="px-6 py-5">
-      <div className="flex items-end justify-between mb-4">
+    <div className="px-3 md:px-6 py-4 md:py-5">
+      <div className="flex flex-col md:flex-row md:items-end justify-between mb-4 gap-3">
         <div>
           <div
             className="text-[11px] font-semibold uppercase tracking-[0.1em] mb-1"
@@ -191,7 +191,7 @@ export function TrendsTab({ drillMetric, setDrillMetric }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-3 mb-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
         <Card>
           <div className="px-5 py-4">
             <div className="text-[11px] mb-2" style={{ color: GRAY_500 }}>
@@ -268,7 +268,7 @@ export function TrendsTab({ drillMetric, setDrillMetric }) {
             )
           }
         />
-        <div className="px-3 pb-4 pt-2" style={{ height: 340 }}>
+        <div className="px-3 pb-4 pt-2 h-[240px] md:h-[340px]">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
               data={series}
@@ -334,7 +334,7 @@ export function TrendsTab({ drillMetric, setDrillMetric }) {
         </div>
       </Card>
 
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {metrics
           .filter((m) => m.key !== active.key)
           .map((m) => {

@@ -309,12 +309,12 @@ export function OverviewTab({ setTab, setDrillMetric }) {
   const hasFilteredData = universeRecords.length > 0;
 
   return (
-    <div className="px-6 py-5">
+    <div className="px-3 md:px-6 py-4 md:py-5">
       <div className="text-[12px] mb-3" style={{ color: GRAY_500 }}>
         Click any chart element to filter · click a KPI to explore its detail view
       </div>
 
-      <div className="grid grid-cols-5 gap-3 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
         {kpiCards.map((k) => (
           <Card
             key={k.key}
@@ -352,7 +352,7 @@ export function OverviewTab({ setTab, setDrillMetric }) {
         </Card>
       )}
 
-      <div className="grid grid-cols-2 gap-3 mb-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         <Card>
           <CardHeader
             title="Volume by Make"
@@ -546,7 +546,7 @@ export function OverviewTab({ setTab, setDrillMetric }) {
         </Card>
       </div>
 
-      <div className="grid grid-cols-3 gap-3 mb-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
         <Card>
           <CardHeader
             title="Price Distribution"

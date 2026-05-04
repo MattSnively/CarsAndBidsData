@@ -146,7 +146,7 @@ export function CompareTab() {
   );
 
   return (
-    <div className="px-6 py-5">
+    <div className="px-3 md:px-6 py-4 md:py-5">
       <div className="mb-4">
         <div
           className="text-[11px] font-semibold uppercase tracking-[0.1em] mb-1"
@@ -159,7 +159,7 @@ export function CompareTab() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 mb-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         <Card>
           <div className="px-5 py-4">
             <div
@@ -296,7 +296,7 @@ export function CompareTab() {
           title="Market position"
           sub="All makes plotted by sell-through × avg. price · click any bubble to filter · bubble size = volume"
         />
-        <div className="px-3 pb-4 pt-2" style={{ height: 360 }}>
+        <div className="px-3 pb-4 pt-2 h-[260px] md:h-[360px]">
           <ResponsiveContainer width="100%" height="100%">
             <ScatterChart margin={{ top: 15, right: 15, left: 25, bottom: 25 }}>
               <CartesianGrid stroke={GRAY_100} />

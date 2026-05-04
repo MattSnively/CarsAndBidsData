@@ -72,7 +72,7 @@ export function ActiveFilterBar({ filters, setFilters, reset }) {
 
   return (
     <div
-      className="flex items-center gap-2 px-6 py-2.5 border-b flex-wrap"
+      className="flex items-center gap-2 px-3 md:px-6 py-2.5 border-b flex-wrap"
       style={{ background: CARD_BG, borderColor: GRAY_200 }}
     >
       <div
