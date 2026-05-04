@@ -25,6 +25,7 @@ import {
   findPatternExamples,
 } from "../data.js";
 import {
+  CARD_BG,
   GRAY_100,
   GRAY_200,
   GRAY_400,
@@ -309,18 +310,19 @@ export function InsightsTab() {
           right={
             <div className="flex flex-col items-end gap-2">
               {/* Toggle pills — switch between the three chart views */}
-              <div className="flex items-center gap-1">
+              <div
+                className="flex items-center gap-1 p-0.5"
+                style={{ background: CARD_BG, border: `1px solid ${GRAY_200}`, borderRadius: 4 }}
+              >
                 {CHART_VIEWS.map((v) => (
                   <button
                     key={v.id}
                     onClick={() => setActiveChart(v.id)}
-                    className="text-[10px] px-2.5 py-1 rounded"
+                    className="px-2.5 py-1 text-[10.5px] font-medium transition-colors"
                     style={{
-                      background: activeChart === v.id ? INK : GRAY_100,
-                      color:      activeChart === v.id ? "white" : GRAY_500,
-                      fontWeight: activeChart === v.id ? 600 : 400,
-                      border:     "none",
-                      cursor:     "pointer",
+                      background: activeChart === v.id ? INK_SURFACE : "transparent",
+                      color:      activeChart === v.id ? "white" : GRAY_700,
+                      borderRadius: 3,
                     }}
                   >
                     {v.label}
