@@ -22,12 +22,12 @@ import {
   applyAllFilters,
   applyUniverseFilters,
   computeByMake,
-  computeByMonth,
   computeByMonthSplit,
   computeKPIsSplit,
   computePriceDist,
   computeReserveSplit,
   computeScatterPoints,
+  groupScatterByMake,
 } from "../data.js";
 import {
   GRAY_100,
@@ -37,17 +37,132 @@ import {
   GRAY_500,
   GRAY_700,
   INK,
+  INK_SURFACE,
   LIME,
   LIME_DEEP,
   LIME_SOFT,
+  MAKE_COLORS,
   fmtFull,
   fmtK,
   fmtN,
 } from "../tokens.js";
 
+/**
+ * Shared scatter chart used both in the compact card and the full-screen modal.
+ * When onPointClick is provided the chart is click-interactive (modal mode).
+ */
+function ScatterPanel({ scatterPts, filters, height, selectedPoint, onPointClick }) {
+  const multiMake = filters.makes.length >= 2;
+  const byMake = multiMake ? groupScatterByMake(scatterPts) : null;
+
+  const scatterTooltip = ({ active, payload }) => {
+    if (!active || !payload?.length) return null;
+    const d = payload[0].payload;
+    const txLabel = d.transmission === "M" ? "Manual" : d.transmission === "A" ? "Auto" : "—";
+    return (
+      <div
+        className="text-[11px] px-2.5 py-1.5 shadow-lg"
+        style={{ background: INK_SURFACE, color: "white", borderRadius: 4 }}
+      >
+        <div className="font-semibold mb-0.5">
+          {d.year} {d.make}
+        </div>
+        <div style={{ opacity: 0.8 }}>{d.model}</div>
+        <div className="mt-1">
+          {(d.mileage / 1000).toFixed(0)}k mi · {fmtFull(d.price)} · {d.bids} bids
+        </div>
+        <div className="mt-0.5" style={{ opacity: 0.75 }}>
+          {d.colorGroup} · {txLabel}{d.noReserve ? " · No Reserve" : ""}
+        </div>
+        {onPointClick && <div className="mt-0.5 text-[10px]" style={{ opacity: 0.5 }}>Click to inspect</div>}
+      </div>
+    );
+  };
+
+  if (scatterPts.length === 0) {
+    return (
+      <div
+        className="flex items-center justify-center text-[12px]"
+        style={{ height, color: GRAY_500 }}
+      >
+        No data
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ height }} className="px-3 pb-3 pt-1">
+      <ResponsiveContainer width="100%" height="100%">
+        <ScatterChart
+          margin={{ top: 10, right: 10, left: 0, bottom: 5 }}
+          onClick={
+            onPointClick
+              ? (e) => { if (e?.activePayload?.[0]) onPointClick(e.activePayload[0].payload); }
+              : undefined
+          }
+          style={{ cursor: onPointClick ? "pointer" : "default" }}
+        >
+          <CartesianGrid stroke={GRAY_100} vertical={false} />
+          <XAxis
+            dataKey="mileage"
+            type="number"
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: GRAY_500, fontSize: 10 }}
+            tickFormatter={(v) => `${v >= 1000 ? (v / 1000).toFixed(0) + "k" : v}`}
+            domain={[0, filters.mileageMax ? filters.mileageMax * 1.05 : 250000]}
+          />
+          <YAxis
+            dataKey="price"
+            type="number"
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: GRAY_500, fontSize: 10 }}
+            tickFormatter={(v) => `${v >= 1000 ? (v / 1000).toFixed(0) + "k" : v}`}
+            domain={[0, 300000]}
+          />
+          <Tooltip content={scatterTooltip} cursor={{ strokeDasharray: "2 2" }} />
+          {multiMake
+            ? filters.makes.map((make, i) => (
+                <Scatter
+                  key={make}
+                  name={make}
+                  data={byMake.get(make) || []}
+                  fill={MAKE_COLORS[i % MAKE_COLORS.length]}
+                  fillOpacity={0.6}
+                />
+              ))
+            : <Scatter
+                data={scatterPts}
+                fill={LIME_DEEP}
+                fillOpacity={0.5}
+              />
+          }
+          {filters.mileageMax !== null && (
+            <ReferenceLine
+              x={filters.mileageMax}
+              stroke={INK}
+              strokeWidth={1.5}
+              strokeDasharray="3 3"
+              label={{
+                value: `≤${(filters.mileageMax / 1000).toFixed(0)}k mi`,
+                fill: INK,
+                fontSize: 10,
+                position: "top",
+              }}
+            />
+          )}
+        </ScatterChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 export function OverviewTab({ setTab, setDrillMetric }) {
   const { filters, setFilters } = useFilters();
   const [showAllMakes, setShowAllMakes] = useState(false);
+  const [scatterExpanded, setScatterExpanded] = useState(false);
+  const [selectedPoint, setSelectedPoint] = useState(null);
 
   /* ── Filter sets ─────────────────────────────────────────────
      universe    = all filters EXCEPT price band (used for STR-bearing data)
@@ -363,7 +478,7 @@ export function OverviewTab({ setTab, setDrillMetric }) {
                       return (
                         <div
                           className="text-[11.5px] px-2.5 py-1.5 shadow-lg"
-                          style={{ background: INK, color: "white", borderRadius: 4 }}
+                          style={{ background: INK_SURFACE, color: "white", borderRadius: 4 }}
                         >
                           <div className="font-semibold mb-0.5">{label}</div>
                           {payload.map((p, i) => (
@@ -461,7 +576,7 @@ export function OverviewTab({ setTab, setDrillMetric }) {
                       return (
                         <div
                           className="text-[11.5px] px-2.5 py-1.5 shadow-lg"
-                          style={{ background: INK, color: "white", borderRadius: 4 }}
+                          style={{ background: INK_SURFACE, color: "white", borderRadius: 4 }}
                         >
                           <div className="font-semibold mb-0.5">{label}</div>
                           <div className="flex items-center gap-2">
@@ -506,102 +621,217 @@ export function OverviewTab({ setTab, setDrillMetric }) {
         <Card>
           <CardHeader
             title="Mileage vs. Sale Price"
-            sub="Sold listings only"
+            sub={
+              filters.makes.length >= 2
+                ? "Color per make · click expand for full view with point details"
+                : "Click expand icon for full view with point details"
+            }
             right={
-              <div
-                className="flex items-center gap-1 p-0.5"
-                style={{ background: GRAY_100, borderRadius: 4 }}
-              >
-                {[null, 25000, 50000, 100000].map((cap) => {
-                  const active = filters.mileageMax === cap;
-                  return (
-                    <button
-                      key={cap === null ? "any" : cap}
-                      onClick={() => setFilters((f) => ({ ...f, mileageMax: cap }))}
-                      className="px-2 py-0.5 text-[10.5px] font-medium transition-colors"
-                      style={{
-                        background: active ? INK : "transparent",
-                        color: active ? "white" : GRAY_700,
-                        borderRadius: 3,
-                      }}
-                    >
-                      {cap === null ? "Any" : `≤${cap / 1000}k`}
-                    </button>
-                  );
-                })}
+              <div className="flex items-center gap-2">
+                <div
+                  className="flex items-center gap-1 p-0.5"
+                  style={{ background: GRAY_100, borderRadius: 4 }}
+                >
+                  {[null, 25000, 50000, 100000].map((cap) => {
+                    const active = filters.mileageMax === cap;
+                    return (
+                      <button
+                        key={cap === null ? "any" : cap}
+                        onClick={() => setFilters((f) => ({ ...f, mileageMax: cap }))}
+                        className="px-2 py-0.5 text-[10.5px] font-medium transition-colors"
+                        style={{
+                          background: active ? INK_SURFACE : "transparent",
+                          color: active ? "white" : GRAY_700,
+                          borderRadius: 3,
+                        }}
+                      >
+                        {cap === null ? "Any" : `≤${cap / 1000}k`}
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* Expand icon */}
+                <button
+                  onClick={() => { setScatterExpanded(true); setSelectedPoint(null); }}
+                  title="Expand to full screen"
+                  className="flex items-center justify-center w-6 h-6 transition-opacity hover:opacity-70"
+                  style={{ color: GRAY_500 }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                    <path d="M1 5V1h4M8 1h4v4M12 8v4H8M5 12H1V8" />
+                  </svg>
+                </button>
               </div>
             }
           />
-          <div className="px-3 pb-3 pt-1" style={{ height: 220 }}>
-            {scatterPts.length === 0 ? (
-              <div
-                className="h-full flex items-center justify-center text-[12px]"
-                style={{ color: GRAY_500 }}
-              >
-                No data
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <ScatterChart margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
-                  <CartesianGrid stroke={GRAY_100} vertical={false} />
-                  <XAxis
-                    dataKey="mileage"
-                    type="number"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: GRAY_500, fontSize: 10 }}
-                    tickFormatter={(v) =>
-                      `${v >= 1000 ? (v / 1000).toFixed(0) + "k" : v}`
-                    }
-                    domain={[0, 250000]}
-                  />
-                  <YAxis
-                    dataKey="price"
-                    type="number"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: GRAY_500, fontSize: 10 }}
-                    tickFormatter={(v) =>
-                      `${v >= 1000 ? (v / 1000).toFixed(0) + "k" : v}`
-                    }
-                    domain={[0, 300000]}
-                  />
-                  <Tooltip
-                    content={({ active, payload }) => {
-                      if (!active || !payload?.length) return null;
-                      const d = payload[0].payload;
-                      return (
-                        <div
-                          className="text-[11px] px-2.5 py-1.5 shadow-lg"
-                          style={{ background: INK, color: "white", borderRadius: 4 }}
-                        >
-                          <div>{(d.mileage / 1000).toFixed(0)}k mi</div>
-                          <div className="font-semibold">{fmtFull(d.price)}</div>
-                        </div>
-                      );
-                    }}
-                    cursor={{ strokeDasharray: "2 2" }}
-                  />
-                  <Scatter data={scatterPts} fill={LIME_DEEP} fillOpacity={0.5} />
-                  {filters.mileageMax !== null && (
-                    <ReferenceLine
-                      x={filters.mileageMax}
-                      stroke={INK}
-                      strokeWidth={1.5}
-                      strokeDasharray="3 3"
-                      label={{
-                        value: `≤${(filters.mileageMax / 1000).toFixed(0)}k mi`,
-                        fill: INK,
-                        fontSize: 10,
-                        position: "top",
-                      }}
-                    />
-                  )}
-                </ScatterChart>
-              </ResponsiveContainer>
-            )}
-          </div>
+          <ScatterPanel
+            scatterPts={scatterPts}
+            filters={filters}
+            height={220}
+            selectedPoint={null}
+            onPointClick={null}
+          />
+          {/* Multi-make legend */}
+          {filters.makes.length >= 2 && (
+            <div className="px-4 pb-3 flex flex-wrap gap-3">
+              {filters.makes.map((mk, i) => (
+                <div key={mk} className="flex items-center gap-1.5 text-[10.5px]" style={{ color: GRAY_500 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: 99, background: MAKE_COLORS[i % MAKE_COLORS.length] }} />
+                  {mk}
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
+
+        {/* ── Full-screen scatter modal ─────────────────────────── */}
+        {scatterExpanded && (
+          <div
+            style={{
+              position: "fixed", inset: 0, zIndex: 50,
+              background: "rgba(0,0,0,0.65)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+            onClick={(e) => { if (e.target === e.currentTarget) setScatterExpanded(false); }}
+          >
+            <div
+              style={{
+                background: "var(--card-bg)",
+                borderRadius: 8,
+                width: "88vw", maxWidth: 1200,
+                height: "88vh",
+                display: "flex", flexDirection: "column",
+                overflow: "hidden",
+                boxShadow: "0 24px 80px rgba(0,0,0,0.4)",
+              }}
+            >
+              <div className="flex items-center justify-between px-5 pt-4 pb-2">
+                <div>
+                  <div className="text-[16px] font-semibold tracking-tight" style={{ color: INK }}>
+                    Mileage vs. Sale Price
+                  </div>
+                  <div className="text-[11.5px] mt-0.5" style={{ color: GRAY_500 }}>
+                    Click any point to inspect · hover to preview
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div
+                    className="flex items-center gap-1 p-0.5"
+                    style={{ background: GRAY_100, borderRadius: 4 }}
+                  >
+                    {[null, 25000, 50000, 100000].map((cap) => {
+                      const active = filters.mileageMax === cap;
+                      return (
+                        <button
+                          key={cap === null ? "any" : cap}
+                          onClick={() => setFilters((f) => ({ ...f, mileageMax: cap }))}
+                          className="px-2.5 py-1 text-[11px] font-medium transition-colors"
+                          style={{
+                            background: active ? INK_SURFACE : "transparent",
+                            color: active ? "white" : GRAY_700,
+                            borderRadius: 3,
+                          }}
+                        >
+                          {cap === null ? "Any" : `≤${cap / 1000}k`}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={() => setScatterExpanded(false)}
+                    className="text-[18px] leading-none flex items-center justify-center w-8 h-8 transition-opacity hover:opacity-60"
+                    style={{ color: GRAY_500 }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-1 min-h-0 gap-0">
+                {/* Chart area */}
+                <div className="flex-1 min-w-0 px-3 pb-4">
+                  <ScatterPanel
+                    scatterPts={scatterPts}
+                    filters={filters}
+                    height="100%"
+                    selectedPoint={selectedPoint}
+                    onPointClick={setSelectedPoint}
+                  />
+                </div>
+
+                {/* Selected point info panel */}
+                <div
+                  className="flex-shrink-0 border-l px-5 py-4"
+                  style={{ width: 240, borderColor: GRAY_200 }}
+                >
+                  {selectedPoint ? (
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.08em] mb-3" style={{ color: GRAY_500 }}>
+                        Selected Listing
+                      </div>
+                      <div className="text-[15px] font-bold tracking-tight mb-0.5" style={{ color: INK }}>
+                        {selectedPoint.year} {selectedPoint.make}
+                      </div>
+                      <div className="text-[13px] mb-4" style={{ color: GRAY_700 }}>
+                        {selectedPoint.model}
+                      </div>
+                      <div className="space-y-2">
+                        {[
+                          { label: "Sale Price", value: fmtFull(selectedPoint.price) },
+                          { label: "Mileage", value: `${(selectedPoint.mileage / 1000).toFixed(1)}k mi` },
+                          { label: "Bids", value: selectedPoint.bids },
+                          { label: "Color", value: selectedPoint.colorGroup },
+                          {
+                            label: "Transmission",
+                            value: selectedPoint.transmission === "M"
+                              ? "Manual"
+                              : selectedPoint.transmission === "A"
+                              ? "Automatic"
+                              : "—",
+                          },
+                          {
+                            label: "Reserve",
+                            value: selectedPoint.noReserve ? "No Reserve" : "With Reserve",
+                          },
+                        ].map(({ label, value }) => (
+                          <div key={label} className="flex justify-between text-[12px]">
+                            <span style={{ color: GRAY_500 }}>{label}</span>
+                            <span className="font-semibold" style={{ color: INK }}>{value}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        onClick={() => setSelectedPoint(null)}
+                        className="mt-4 text-[11px] hover:underline"
+                        style={{ color: LIME_DEEP }}
+                      >
+                        Clear selection
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="text-[12px] leading-relaxed" style={{ color: GRAY_500 }}>
+                      Click any point on the chart to inspect that listing's details here.
+                    </div>
+                  )}
+                  {/* Make legend in expanded view */}
+                  {filters.makes.length >= 2 && (
+                    <div className="mt-6">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.08em] mb-2" style={{ color: GRAY_500 }}>
+                        Makes
+                      </div>
+                      {filters.makes.map((mk, i) => (
+                        <div key={mk} className="flex items-center gap-2 text-[12px] mb-1.5" style={{ color: GRAY_700 }}>
+                          <div style={{ width: 9, height: 9, borderRadius: 99, background: MAKE_COLORS[i % MAKE_COLORS.length], flexShrink: 0 }} />
+                          {mk}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <Card>
           <CardHeader title="Reserve vs. No Reserve" sub="Click either side to filter" />

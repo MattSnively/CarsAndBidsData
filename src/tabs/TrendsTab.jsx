@@ -21,11 +21,13 @@ import {
   computeByDay,
 } from "../data.js";
 import {
+  CARD_BG,
   GRAY_100,
   GRAY_200,
   GRAY_500,
   GRAY_700,
   INK,
+  INK_SURFACE,
   LIME,
   LIME_DEEP,
   RED,
@@ -167,7 +169,7 @@ export function TrendsTab({ drillMetric, setDrillMetric }) {
         </div>
         <div
           className="flex items-center gap-1 p-0.5"
-          style={{ background: "white", border: `1px solid ${GRAY_200}`, borderRadius: 4 }}
+          style={{ background: CARD_BG, border: `1px solid ${GRAY_200}`, borderRadius: 4 }}
         >
           {metrics.map((m) => {
             const isActive = m.key === active.key;
@@ -177,7 +179,7 @@ export function TrendsTab({ drillMetric, setDrillMetric }) {
                 onClick={() => setDrillMetric(m.key)}
                 className="px-3 py-1.5 text-[12px] font-medium transition-colors"
                 style={{
-                  background: isActive ? INK : "transparent",
+                  background: isActive ? INK_SURFACE : "transparent",
                   color: isActive ? "white" : GRAY_700,
                   borderRadius: 3,
                 }}
@@ -308,7 +310,7 @@ export function TrendsTab({ drillMetric, setDrillMetric }) {
                   return (
                     <div
                       className="text-[11.5px] px-2.5 py-1.5 shadow-lg"
-                      style={{ background: INK, color: "white", borderRadius: 4 }}
+                      style={{ background: INK_SURFACE, color: "white", borderRadius: 4 }}
                     >
                       <div className="font-semibold mb-0.5">{label}</div>
                       <div className="font-semibold">

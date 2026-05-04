@@ -2,6 +2,55 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme tokens ─────────────────────────────────────────────
+   Light is the default (:root). [data-theme="dark"] overrides.
+   All inline-style color references in components use these
+   CSS variables via the named exports in tokens.js.
+   ─────────────────────────────────────────────────────────── */
+:root {
+  --ink: #0a0a0a;
+  --ink-surface: #0a0a0a;   /* dark bg for buttons / tooltips */
+  --card-bg: #ffffff;
+  --bg: #fafaf9;
+  --lime: #46cd8d;
+  --lime-soft: #d8f5e6;
+  --lime-deep: #2ba36a;
+  --gray-900: #1a1a1a;
+  --gray-700: #3a3a3a;
+  --gray-500: #7a7a7a;
+  --gray-400: #a3a3a3;
+  --gray-300: #d1d1d1;
+  --gray-200: #e5e5e5;
+  --gray-100: #f2f2f2;
+  --gray-50: #f8f8f7;
+  --red: #d94444;
+}
+
+[data-theme="dark"] {
+  --ink: #e8e8e8;
+  --ink-surface: #2e2e2e;   /* stays dark in dark mode for buttons/tooltips */
+  --card-bg: #1a1a1a;
+  --bg: #111111;
+  --lime: #46cd8d;
+  --lime-soft: #0d2b1e;
+  --lime-deep: #3dba7d;
+  --gray-900: #e0e0e0;
+  --gray-700: #c0c0c0;
+  --gray-500: #8a8a8a;
+  --gray-400: #666666;
+  --gray-300: #3a3a3a;
+  --gray-200: #2a2a2a;
+  --gray-100: #1e1e1e;
+  --gray-50: #161616;
+  --red: #e05757;
+}
+
+/* Used in ActiveFilterBar for the pill remove button hover —
+   Tailwind can't reference CSS variables in utility classes. */
+.hover-card-bg:hover {
+  background: var(--card-bg);
+}
+
 html {
   font-family: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-feature-settings: "cv11", "ss01", "ss03";

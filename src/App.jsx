@@ -6,12 +6,13 @@ import { FilterSidebar } from "./components/FilterSidebar.jsx";
 import { Header } from "./components/Header.jsx";
 import { applyUniverseFilters, getMeta, loadData } from "./data.js";
 import { CompareTab } from "./tabs/CompareTab.jsx";
+import { InsightsTab } from "./tabs/InsightsTab.jsx";
 import { ListingsTab } from "./tabs/ListingsTab.jsx";
 import { OverviewTab } from "./tabs/OverviewTab.jsx";
 import { TrendsTab } from "./tabs/TrendsTab.jsx";
 import { BG, GRAY_500, INK, LIME } from "./tokens.js";
 
-function Shell() {
+function Shell({ isDark, toggleDark }) {
   const { filters, setFilters, reset } = useFilters();
   const [tab, setTab] = useState("Overview");
   const [drillMetric, setDrillMetric] = useState("gmv");
@@ -37,6 +38,8 @@ function Shell() {
         setTab={setTab}
         filteredCount={filteredCount}
         totalCount={totalCount}
+        isDark={isDark}
+        toggleDark={toggleDark}
       />
       <ActiveFilterBar filters={filters} setFilters={setFilters} reset={reset} />
       <div className="flex">
@@ -50,6 +53,7 @@ function Shell() {
           )}
           {tab === "Listings" && <ListingsTab />}
           {tab === "Compare" && <CompareTab />}
+          {tab === "Insights" && <InsightsTab />}
         </main>
       </div>
     </div>
@@ -103,6 +107,9 @@ function ErrorState({ error }) {
 
 export default function App() {
   const [state, setState] = useState({ status: "loading", error: null });
+  const [isDark, setIsDark] = useState(false);
+
+  const toggleDark = () => setIsDark((v) => !v);
 
   useEffect(() => {
     let cancelled = false;
@@ -119,14 +126,16 @@ export default function App() {
   }, []);
 
   if (state.status === "loading") {
-    return <LoadingState status="Loading 31,253 auctions…" />;
+    return <LoadingState status="Loading auctions…" />;
   }
   if (state.status === "error") {
     return <ErrorState error={state.error} />;
   }
   return (
-    <FilterProvider>
-      <Shell />
-    </FilterProvider>
+    <div data-theme={isDark ? "dark" : undefined}>
+      <FilterProvider>
+        <Shell isDark={isDark} toggleDark={toggleDark} />
+      </FilterProvider>
+    </div>
   );
 }

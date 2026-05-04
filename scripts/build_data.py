@@ -2,15 +2,17 @@
 Build the dashboard data file from data/carsandbids_master.csv.
 
 Output: public/data/auctions.json
-Format: { makes: [...], bodies: [...], records: [[...], ...], meta: {...} }
+Format: { makes: [...], bodies: [...], colors: [...], records: [[...], ...], meta: {...} }
 
-Each record is a 13-element array:
+Each record is a 15-element array:
   [year, makeIdx, model, sale_price, mileage, num_bids, num_views,
    sold(0|1), no_reserve(0|1), bodyIdx, transmission("M"|"A"|""),
-   monthOffset, dayOffset]
+   monthOffset, dayOffset, colorIdx, num_comments]
 
 monthOffset: months since 2021-08 (the dataset start). Month 0 = Aug 2021.
 dayOffset:   days since 2021-08-01 (the dataset start). Day 0 = Aug 1, 2021.
+colorIdx:    index into the colors lookup array (grouped by major color family).
+num_comments: integer comment count for auction engagement analysis.
 
 Run: python scripts/build_data.py [path_to_csv]
 Defaults to ./data/carsandbids_master.csv (relative to the repo root).
@@ -27,6 +29,31 @@ import pandas as pd
 EPOCH_YEAR = 2021
 EPOCH_MONTH = 8  # August
 EPOCH_DATE = date_type(2021, 8, 1)
+
+# Color grouping: map exterior_color strings to one of 8 major color families.
+# Each tuple is (group_label, [substring_keywords]).  Order matters — first match wins.
+COLOR_GROUPS = [
+    ("White",        ["white", "pearl", "ivory", "cream", "polar", "alpine", "chalk", "quartz", "glacier"]),
+    ("Black",        ["black", "noir", "midnight", "obsidian", "onyx", "carbon", "jet", "shadow"]),
+    ("Silver",       ["silver", "titanium", "aluminum", "argent", "satin", "platinum", "palladium"]),
+    ("Gray",         ["gray", "grey", "charcoal", "graphite", "slate", "granite", "cement", "ash", "storm"]),
+    ("Red",          ["red", "crimson", "scarlet", "burgundy", "maroon", "ruby", "wine", "rosso", "rouge"]),
+    ("Blue",         ["blue", "navy", "aqua", "teal", "cobalt", "sapphire", "azure", "marine", "ocean", "portimao"]),
+    ("Green",        ["green", "olive", "emerald", "forest", "sage", "verde", "british racing"]),
+    ("Yellow/Orange",["yellow", "gold", "lemon", "sunburst", "orange", "bronze", "amber", "dakar", "sakhir"]),
+]
+COLOR_OTHER = "Other"
+
+
+def group_color(color_str) -> str:
+    """Map an exterior_color value to one of 8 standard color group labels."""
+    if pd.isna(color_str) or not str(color_str).strip():
+        return COLOR_OTHER
+    c = str(color_str).lower()
+    for group_label, keywords in COLOR_GROUPS:
+        if any(kw in c for kw in keywords):
+            return group_label
+    return COLOR_OTHER
 
 
 def month_offset(dt) -> int:
@@ -80,9 +107,13 @@ def build(csv_path: Path, output_path: Path) -> None:
     # Build lookup tables
     makes = sorted(set(str(m) for m in df["make"].dropna()))
     bodies = sorted(set(str(b) for b in df["body_style"].dropna()))
+    # Colors are built from the fixed list of group labels (plus Other) so the
+    # index is stable regardless of which colors appear in the current dataset.
+    colors = [g[0] for g in COLOR_GROUPS] + [COLOR_OTHER]
     make_ix = {m: i for i, m in enumerate(makes)}
     body_ix = {b: i for i, b in enumerate(bodies)}
-    print(f"  {len(makes)} unique makes, {len(bodies)} unique body styles")
+    color_ix = {c: i for i, c in enumerate(colors)}
+    print(f"  {len(makes)} unique makes, {len(bodies)} unique body styles, {len(colors)} color groups")
 
     # Pack records
     records = []
@@ -101,6 +132,8 @@ def build(csv_path: Path, output_path: Path) -> None:
             normalize_transmission(r.get("transmission")),
             month_offset(r["end_date"]),
             day_offset(r["end_date"]),  # field 12 — days since epoch, for daily/weekly chart granularity
+            color_ix.get(group_color(r.get("exterior_color")), color_ix[COLOR_OTHER]),  # field 13 — color group
+            safe_int(r.get("num_comments")),   # field 14 — comment count (engagement signal)
         ]
         records.append(record)
 
@@ -118,7 +151,7 @@ def build(csv_path: Path, output_path: Path) -> None:
         "total_gmv": gmv,
         "months_total": months_total,
         "epoch": f"{EPOCH_YEAR}-{EPOCH_MONTH:02d}",
-        "schema_version": 2,
+        "schema_version": 3,
         "field_index": {
             "year": 0,
             "make_ix": 1,
@@ -133,12 +166,15 @@ def build(csv_path: Path, output_path: Path) -> None:
             "transmission": 10,
             "month_offset": 11,
             "day_offset": 12,
+            "color_ix": 13,
+            "comments": 14,
         },
     }
 
     output = {
         "makes": makes,
         "bodies": bodies,
+        "colors": colors,
         "records": records,
         "meta": meta,
     }

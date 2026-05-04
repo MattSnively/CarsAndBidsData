@@ -22,12 +22,15 @@ export const FIELD = {
   tx: 10,
   mo: 11,
   dy: 12, // days since epoch (Aug 1, 2021) — used for daily/weekly chart granularity
+  cl: 13, // color group index into DATA.colors
+  cm: 14, // num_comments (engagement signal)
 };
 
 // Module-level data, populated by loadData()
 let DATA = {
   makes: [],
   bodies: [],
+  colors: [],
   records: [],
   meta: null,
 };
@@ -49,6 +52,7 @@ export async function loadData(baseUrl = "/") {
 export const getData = () => DATA;
 export const getMakes = () => DATA.makes;
 export const getBodies = () => DATA.bodies;
+export const getColors = () => DATA.colors;
 export const getMeta = () => DATA.meta;
 
 /* ============================================================
@@ -389,8 +393,10 @@ export function computeReserveSplit(records) {
 }
 
 /**
- * Scatter sample for the mileage-vs-price plot. Always shows sold listings
- * with sane bounds; subsamples to `max` points for performance.
+ * Scatter sample for the mileage-vs-price plot. Includes make/year/model/color
+ * so the tooltip can display vehicle info and multi-make coloring can work.
+ * Always shows sold listings with sane bounds; subsamples to `max` points
+ * for performance.
  */
 export function computeScatterPoints(records, max = 600) {
   const sold = [];
@@ -402,17 +408,648 @@ export function computeScatterPoints(records, max = 600) {
       r[FIELD.p] > 0 &&
       r[FIELD.p] < 300000
     ) {
-      sold.push(r);
+      sold.push({
+        mileage: r[FIELD.mi],
+        price: r[FIELD.p],
+        make: DATA.makes[r[FIELD.mk]],
+        model: r[FIELD.md],
+        year: r[FIELD.yr],
+        bids: r[FIELD.b],
+        colorGroup: DATA.colors?.[r[FIELD.cl]] ?? "—",
+        transmission: r[FIELD.tx] || "—",
+        noReserve: r[FIELD.nr] === 1,
+      });
     }
   }
-  if (sold.length <= max) {
-    return sold.map((r) => ({ mileage: r[FIELD.mi], price: r[FIELD.p] }));
-  }
+  if (sold.length <= max) return sold;
   const step = sold.length / max;
   const out = [];
   for (let i = 0; i < max; i++) {
-    const r = sold[Math.floor(i * step)];
-    out.push({ mileage: r[FIELD.mi], price: r[FIELD.p] });
+    out.push(sold[Math.floor(i * step)]);
   }
   return out;
+}
+
+/**
+ * Groups scatter points by make so each make can be rendered as a distinct
+ * Recharts <Scatter> series with its own color. Used when multiple makes are
+ * selected via the filter.
+ */
+export function groupScatterByMake(points) {
+  const map = new Map();
+  for (const pt of points) {
+    let arr = map.get(pt.make);
+    if (!arr) { arr = []; map.set(pt.make, arr); }
+    arr.push(pt);
+  }
+  return map;
+}
+
+/* ============================================================
+   INSIGHTS TAB COMPUTATIONS
+   ============================================================ */
+
+/**
+ * For each dimension (transmission, reserve type, mileage band, age band,
+ * mileage/age ratio, color group) compute average bids and views so the
+ * Insights tab can show what attributes correlate with high demand.
+ */
+export function computeInsightFactors(records) {
+  const CURRENT_YEAR = new Date().getFullYear();
+
+  const total = records.length;
+  if (total === 0) return null;
+
+  let totalBids = 0;
+  let totalViews = 0;
+  for (const r of records) { totalBids += r[FIELD.b]; totalViews += r[FIELD.v]; }
+  const overall = { avgBids: totalBids / total, avgViews: totalViews / total };
+
+  // ── helpers ──────────────────────────────────────────────────
+  const blank = () => ({ bids: 0, views: 0, count: 0 });
+  const finalize = (g) => ({
+    ...g,
+    avgBids: g.count > 0 ? g.bids / g.count : 0,
+    avgViews: g.count > 0 ? g.views / g.count : 0,
+  });
+
+  const txMap = { M: blank(), A: blank(), "": blank() };
+  const nrMap = { nr: blank(), r: blank() };
+
+  const miBands = [
+    { label: "0–25k mi",   min: 0,      max: 25000,   ...blank() },
+    { label: "25–50k mi",  min: 25000,  max: 50000,   ...blank() },
+    { label: "50–100k mi", min: 50000,  max: 100000,  ...blank() },
+    { label: "100k+ mi",   min: 100000, max: Infinity, ...blank() },
+  ];
+
+  const ageBands = [
+    { label: "0–5 yrs",  min: 0,  max: 5,        ...blank() },
+    { label: "5–15 yrs", min: 5,  max: 15,       ...blank() },
+    { label: "15+ yrs",  min: 15, max: Infinity, ...blank() },
+  ];
+
+  const miPerYrBands = [
+    { label: "<8k mi/yr",   min: 0,     max: 8000,    ...blank() },
+    { label: "8–12k mi/yr", min: 8000,  max: 12000,   ...blank() },
+    { label: "12–18k mi/yr",min: 12000, max: 18000,   ...blank() },
+    { label: "18k+ mi/yr",  min: 18000, max: Infinity, ...blank() },
+  ];
+
+  // Color groups from DATA.colors; initialise one bucket per group
+  const colorMap = new Map(DATA.colors.map((c) => [c, blank()]));
+
+  for (const r of records) {
+    const bids = r[FIELD.b];
+    const views = r[FIELD.v];
+    const tx = r[FIELD.tx] || "";
+    const mi = r[FIELD.mi];
+    const age = Math.max(1, CURRENT_YEAR - r[FIELD.yr]);
+
+    // Transmission
+    const txBucket = txMap[tx] ?? txMap[""];
+    txBucket.bids += bids; txBucket.views += views; txBucket.count++;
+
+    // Reserve
+    const nrBucket = r[FIELD.nr] === 1 ? nrMap.nr : nrMap.r;
+    nrBucket.bids += bids; nrBucket.views += views; nrBucket.count++;
+
+    // Mileage band
+    for (const band of miBands) {
+      if (mi >= band.min && mi < band.max) {
+        band.bids += bids; band.views += views; band.count++; break;
+      }
+    }
+
+    // Age band
+    for (const band of ageBands) {
+      if (age >= band.min && age < band.max) {
+        band.bids += bids; band.views += views; band.count++; break;
+      }
+    }
+
+    // Miles per year ratio (only meaningful when age > 0 and mileage reported)
+    if (mi > 0) {
+      const miPerYr = mi / age;
+      for (const band of miPerYrBands) {
+        if (miPerYr >= band.min && miPerYr < band.max) {
+          band.bids += bids; band.views += views; band.count++; break;
+        }
+      }
+    }
+
+    // Color
+    const colorLabel = DATA.colors[r[FIELD.cl]] ?? "Other";
+    const cb = colorMap.get(colorLabel);
+    if (cb) { cb.bids += bids; cb.views += views; cb.count++; }
+  }
+
+  return {
+    overall,
+    transmission: {
+      manual:    finalize(txMap.M),
+      automatic: finalize(txMap.A),
+    },
+    reserve: {
+      noReserve: finalize(nrMap.nr),
+      reserve:   finalize(nrMap.r),
+    },
+    mileageBands:    miBands.map(finalize),
+    ageBands:        ageBands.map(finalize),
+    milesPerYrBands: miPerYrBands.map(finalize),
+    colorGroups: DATA.colors.map((c) => ({
+      label: c,
+      ...finalize(colorMap.get(c) ?? blank()),
+    })),
+  };
+}
+
+/**
+ * Identify makes whose sold listings most often command a price premium over
+ * that make's own median sale price.  "Breakout" = sold >threshold% above median.
+ *
+ * Returns top makes by breakout_rate, with supporting metrics.
+ */
+export function computeBreakoutsByMake(records, threshold = 0.25, topN = 15) {
+  // Step 1: compute median sale price per make from ALL sold records
+  const makeGroups = new Map();
+  for (const r of records) {
+    if (r[FIELD.s] !== 1) continue;
+    const mk = DATA.makes[r[FIELD.mk]];
+    let g = makeGroups.get(mk);
+    if (!g) { g = { prices: [], bids: 0, count: 0 }; makeGroups.set(mk, g); }
+    g.prices.push(r[FIELD.p]);
+    g.bids += r[FIELD.b];
+    g.count++;
+  }
+
+  // Median helper
+  const median = (arr) => {
+    const s = [...arr].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  };
+
+  // Build make summary with medians
+  const makeStats = new Map();
+  for (const [mk, g] of makeGroups) {
+    if (g.count < 5) continue; // skip makes with very few sales
+    makeStats.set(mk, { median: median(g.prices), count: g.count, avgBids: g.bids / g.count });
+  }
+
+  // Step 2: count breakout listings per make
+  const breakouts = new Map();
+  for (const r of records) {
+    if (r[FIELD.s] !== 1) continue;
+    const mk = DATA.makes[r[FIELD.mk]];
+    const stats = makeStats.get(mk);
+    if (!stats) continue;
+    const premium = (r[FIELD.p] - stats.median) / stats.median;
+    let b = breakouts.get(mk);
+    if (!b) { b = { breakoutCount: 0, premiumSum: 0, maxPremium: 0, breakoutBids: 0 }; breakouts.set(mk, b); }
+    if (premium > threshold) {
+      b.breakoutCount++;
+      b.premiumSum += premium;
+      b.maxPremium = Math.max(b.maxPremium, premium);
+    }
+  }
+
+  // Step 3: assemble final rows
+  const rows = [];
+  for (const [mk, stats] of makeStats) {
+    const b = breakouts.get(mk) ?? { breakoutCount: 0, premiumSum: 0, maxPremium: 0 };
+    const breakoutRate = b.breakoutCount / stats.count;
+    rows.push({
+      make:         mk,
+      breakoutRate,
+      breakoutCount: b.breakoutCount,
+      avgBreakoutPct: b.breakoutCount > 0 ? (b.premiumSum / b.breakoutCount) * 100 : 0,
+      maxPremiumPct:  b.maxPremium * 100,
+      totalSold:    stats.count,
+      medianPrice:  stats.median,
+      avgBids:      stats.avgBids,
+    });
+  }
+
+  rows.sort((a, b) => b.breakoutRate - a.breakoutRate);
+  return topN ? rows.slice(0, topN) : rows;
+}
+
+/* ============================================================
+   STR STRATEGY ANALYSIS
+   Used exclusively by the Insights tab.
+   ============================================================ */
+
+/**
+ * Groups records by calendar year and computes STR for reserve vs. no-reserve,
+ * plus the count of failed reserve auctions per year.
+ * Year = 2021 + floor((mo + 7) / 12), matching the same formula as monthLabel().
+ */
+export function computeSTRByYear(records) {
+  const map = new Map();
+  for (const r of records) {
+    const year = 2021 + Math.floor((r[FIELD.mo] + 7) / 12);
+    let entry = map.get(year);
+    if (!entry) {
+      entry = { year, rListed: 0, rSold: 0, nrListed: 0, nrSold: 0 };
+      map.set(year, entry);
+    }
+    if (r[FIELD.nr] === 1) {
+      entry.nrListed++;
+      if (r[FIELD.s] === 1) entry.nrSold++;
+    } else {
+      entry.rListed++;
+      if (r[FIELD.s] === 1) entry.rSold++;
+    }
+  }
+  return [...map.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([year, e]) => ({
+      year: String(year),
+      reserveStr:      e.rListed  > 0 ? (e.rSold  / e.rListed)  * 100 : 0,
+      noReserveStr:    e.nrListed > 0 ? (e.nrSold / e.nrListed) * 100 : 0,
+      reserveListed:   e.rListed,
+      reserveFailed:   e.rListed - e.rSold,
+      // reserveFailRate is the "no-sale rate" for reserve auctions — the primary trend metric
+      reserveFailRate: e.rListed > 0 ? ((e.rListed - e.rSold) / e.rListed) * 100 : 0,
+      noReserveListed: e.nrListed,
+    }));
+}
+
+/**
+ * All-time headline stats for the reserve problem analysis.
+ * estimatedLostGMV is a rough estimate: failed reserve count × avg sale price
+ * across all sold listings (high_bid for unsold listings is not in the dataset).
+ */
+export function computeSTRHeadlineStats(records) {
+  let rListed = 0, rSold = 0, nrListed = 0, nrSold = 0;
+  let totalSold = 0, totalGMV = 0;
+  // Track bid counts to show failed reserve auctions were not "unwanted"
+  let rFailedBids = 0, rSoldBids = 0;
+  for (const r of records) {
+    if (r[FIELD.nr] === 1) {
+      nrListed++;
+      if (r[FIELD.s] === 1) nrSold++;
+    } else {
+      rListed++;
+      if (r[FIELD.s] === 1) {
+        rSold++;
+        rSoldBids += r[FIELD.b];
+      } else {
+        rFailedBids += r[FIELD.b];
+      }
+    }
+    if (r[FIELD.s] === 1) { totalSold++; totalGMV += r[FIELD.p]; }
+  }
+  const avgSalePrice = totalSold > 0 ? totalGMV / totalSold : 0;
+  const rFailed = rListed - rSold;
+  const totalListings = rListed + nrListed;
+  return {
+    reserveStr:         rListed  > 0 ? (rSold  / rListed)  * 100 : 0,
+    noReserveStr:       nrListed > 0 ? (nrSold / nrListed) * 100 : 0,
+    reserveListed:      rListed,
+    reserveFailed:      rFailed,
+    reserveFailPct:     rListed > 0 ? (rFailed / rListed) * 100 : 0,
+    estimatedLostGMV:   rFailed * avgSalePrice,
+    avgSalePrice,
+    totalListings,
+    // reservePct is the "slice of the pie" KPI: what fraction of all listings use a reserve
+    reservePct:         totalListings > 0 ? (rListed / totalListings) * 100 : 0,
+    // avg bids per auction — counters the "unwanted cars" narrative for failed reserve
+    avgFailedReserveBids: rFailed > 0 ? rFailedBids / rFailed : 0,
+    avgSoldReserveBids:   rSold   > 0 ? rSoldBids   / rSold   : 0,
+  };
+}
+
+/**
+ * Top makes ranked by total failed reserve auctions (listed with reserve, not sold).
+ * failRate is the percentage of that make's reserve listings that didn't close.
+ */
+export function computeReserveFailByMake(records, topN = 15) {
+  const map = new Map();
+  for (const r of records) {
+    if (r[FIELD.nr] === 1) continue; // reserve listings only
+    const mk = DATA.makes[r[FIELD.mk]];
+    let entry = map.get(mk);
+    if (!entry) {
+      entry = { make: mk, listed: 0, sold: 0, gmv: 0, models: new Map() };
+      map.set(mk, entry);
+    }
+    entry.listed++;
+    if (r[FIELD.s] === 1) { entry.sold++; entry.gmv += r[FIELD.p]; }
+
+    // Track model-level breakdown so we can show the top 3 failing models per make
+    const model = r[FIELD.md] || "Unknown";
+    let me = entry.models.get(model);
+    if (!me) { me = { listed: 0, sold: 0 }; entry.models.set(model, me); }
+    me.listed++;
+    if (r[FIELD.s] === 1) me.sold++;
+  }
+
+  return [...map.values()]
+    .filter((m) => m.listed >= 10)
+    .map((m) => {
+      const topModels = [...m.models.entries()]
+        .map(([model, me]) => ({
+          model,
+          failCount: me.listed - me.sold,
+          listed:    me.listed,
+          failRate:  me.listed > 0 ? ((me.listed - me.sold) / me.listed) * 100 : 0,
+        }))
+        .sort((a, b) => b.failCount - a.failCount)
+        .slice(0, 3);
+      return {
+        make:         m.make,
+        failCount:    m.listed - m.sold,
+        listed:       m.listed,
+        failRate:     m.listed > 0 ? ((m.listed - m.sold) / m.listed) * 100 : 0,
+        avgSalePrice: m.sold > 0 ? m.gmv / m.sold : 0,
+        topModels,
+      };
+    })
+    .sort((a, b) => b.failCount - a.failCount)
+    .slice(0, topN);
+}
+
+/**
+ * Bubble chart data for the Market Demand Quadrant.
+ * Each entry represents one make: avg bids (X), avg sale price (Y),
+ * listing count (Z / bubble size).  Filtered to the topN most-listed makes.
+ */
+export function computeBubbleData(records, topN = 40) {
+  const map = new Map();
+  for (const r of records) {
+    const mk = DATA.makes[r[FIELD.mk]];
+    let m = map.get(mk);
+    if (!m) { m = { make: mk, bids: 0, gmv: 0, sold: 0, listings: 0 }; map.set(mk, m); }
+    m.listings++;
+    m.bids += r[FIELD.b];
+    if (r[FIELD.s] === 1) { m.sold++; m.gmv += r[FIELD.p]; }
+  }
+
+  return [...map.values()]
+    .filter((m) => m.listings >= 10)
+    .sort((a, b) => b.listings - a.listings)
+    .slice(0, topN)
+    .map((m) => ({
+      make:     m.make,
+      avgBids:  m.bids / m.listings,
+      avgPrice: m.sold > 0 ? m.gmv / m.sold : 0,
+      listings: m.listings,
+      str:      (m.sold / m.listings) * 100,
+    }));
+}
+
+// ── Lookup sets used by findPatternExamples ────────────────────────────────────
+// Pattern A: enthusiast-friendly everyday brands (excludes Ford/Chevy/Dodge to keep
+// Mustang/Camaro distinct from Pattern B's "most oversaturated model" story)
+const PATTERN_A_MAKES = new Set([
+  "Honda", "Toyota", "Mazda", "Subaru", "Volkswagen", "Mitsubishi",
+  "Hyundai", "Kia", "Nissan", "Acura", "Infiniti", "Isuzu",
+]);
+
+// Pattern C: exotic/ultra-premium brands where the buyer pool is inherently thin
+const EXOTIC_MAKES = new Set([
+  "Ferrari", "Lamborghini", "McLaren", "Bugatti", "Pagani", "Koenigsegg",
+  "Aston Martin", "Bentley", "Rolls-Royce", "Maserati", "Lotus",
+]);
+
+/**
+ * Maps a raw record to a display-ready auction card object.
+ * Module-private helper — not exported.
+ */
+function toAuctionCard(r) {
+  return {
+    year:    r[FIELD.yr],
+    make:    DATA.makes[r[FIELD.mk]],
+    model:   r[FIELD.md],
+    mileage: r[FIELD.mi],
+    bids:    r[FIELD.b],
+    views:   r[FIELD.v],
+    price:   r[FIELD.p],
+    sold:    r[FIELD.s] === 1,
+  };
+}
+
+/**
+ * Returns { sold, failed } auction examples that illustrate a given failure pattern.
+ *
+ *   sold   — one comparable sold auction to anchor pricing expectations (null if unavailable)
+ *   failed — up to 2 failed reserve examples that clearly match the pattern
+ *
+ *   "A" — Budget Reserve: finds the PATTERN_A_MAKES model with the most reserve failures
+ *          that also has a real sold example (same make+model). Shows market vs. reserve gap.
+ *   "B" — Oversaturated Model: finds the make+model with the most total reserve failures
+ *          across ALL makes — surfaces whatever is truly flooding the market.
+ *   "C" — Ultra-Premium Wall: EXOTIC_MAKES only. Sold benchmark shows what the market pays
+ *          when a buyer shows up; failed examples show how often they don't.
+ */
+export function findPatternExamples(records, patternId) {
+  switch (patternId) {
+
+    case "A": {
+      // Failed reserve auctions from budget/enthusiast makes with some bidding activity
+      const failedBudget = records.filter(
+        (r) => r[FIELD.s] === 0 && r[FIELD.nr] === 0
+          && PATTERN_A_MAKES.has(DATA.makes[r[FIELD.mk]])
+          && r[FIELD.b] >= 5,
+      );
+
+      // Count failures by make+model
+      const failCounts = new Map();
+      for (const r of failedBudget) {
+        const k = `${DATA.makes[r[FIELD.mk]]}|${r[FIELD.md]}`;
+        failCounts.set(k, (failCounts.get(k) ?? 0) + 1);
+      }
+
+      // Index the highest-bid sold example per make+model (needs a real sale price)
+      const soldByModel = new Map();
+      for (const r of records) {
+        if (r[FIELD.s] !== 1 || !PATTERN_A_MAKES.has(DATA.makes[r[FIELD.mk]]) || r[FIELD.p] === 0) continue;
+        const k = `${DATA.makes[r[FIELD.mk]]}|${r[FIELD.md]}`;
+        if (!soldByModel.has(k) || r[FIELD.b] > soldByModel.get(k)[FIELD.b]) soldByModel.set(k, r);
+      }
+
+      // Most-failed model that also has a sold reference price
+      const topEntry = [...failCounts.entries()]
+        .filter(([k]) => soldByModel.has(k))
+        .sort((a, b) => b[1] - a[1])[0];
+
+      if (!topEntry) return { sold: null, failed: [] };
+      const [topKey] = topEntry;
+      const [topMake, topModel] = topKey.split("|");
+
+      const failed = failedBudget
+        .filter((r) => DATA.makes[r[FIELD.mk]] === topMake && r[FIELD.md] === topModel)
+        .sort((a, b) => b[FIELD.b] - a[FIELD.b])
+        .slice(0, 2);
+
+      return {
+        sold:   toAuctionCard(soldByModel.get(topKey)),
+        failed: failed.map(toAuctionCard),
+      };
+    }
+
+    case "B": {
+      // The make+model with the most total failed reserve listings across all brands
+      const failedReserve = records.filter((r) => r[FIELD.s] === 0 && r[FIELD.nr] === 0);
+
+      const failCounts = new Map();
+      for (const r of failedReserve) {
+        const k = `${DATA.makes[r[FIELD.mk]]}|${r[FIELD.md]}`;
+        failCounts.set(k, (failCounts.get(k) ?? 0) + 1);
+      }
+
+      // Index the highest-bid sold example per make+model
+      const soldByModel = new Map();
+      for (const r of records) {
+        if (r[FIELD.s] !== 1 || r[FIELD.p] === 0) continue;
+        const k = `${DATA.makes[r[FIELD.mk]]}|${r[FIELD.md]}`;
+        if (!soldByModel.has(k) || r[FIELD.b] > soldByModel.get(k)[FIELD.b]) soldByModel.set(k, r);
+      }
+
+      // Most-failed model with a sold reference
+      const topEntry = [...failCounts.entries()]
+        .filter(([k]) => soldByModel.has(k))
+        .sort((a, b) => b[1] - a[1])[0];
+
+      if (!topEntry) return { sold: null, failed: [] };
+      const [topKey] = topEntry;
+      const [topMake, topModel] = topKey.split("|");
+
+      const failed = failedReserve
+        .filter((r) => DATA.makes[r[FIELD.mk]] === topMake && r[FIELD.md] === topModel)
+        .sort((a, b) => b[FIELD.b] - a[FIELD.b])
+        .slice(0, 2);
+
+      return {
+        sold:   toAuctionCard(soldByModel.get(topKey)),
+        failed: failed.map(toAuctionCard),
+      };
+    }
+
+    case "C": {
+      // Exotic makes only — the buyer pool is thin by nature
+      const failedExotic = records.filter(
+        (r) => r[FIELD.s] === 0 && r[FIELD.nr] === 0
+          && EXOTIC_MAKES.has(DATA.makes[r[FIELD.mk]]),
+      );
+
+      // Sold benchmark: the exotic with the most bidding activity (proves buyers exist)
+      const soldExotic = records
+        .filter((r) => r[FIELD.s] === 1 && EXOTIC_MAKES.has(DATA.makes[r[FIELD.mk]]) && r[FIELD.p] > 0)
+        .sort((a, b) => b[FIELD.b] - a[FIELD.b])[0] ?? null;
+
+      // Failed: fewest bids = clearest signal of a thin buyer pool
+      const failed = [...failedExotic]
+        .sort((a, b) => a[FIELD.b] - b[FIELD.b])
+        .slice(0, 2);
+
+      return {
+        sold:   soldExotic ? toAuctionCard(soldExotic) : null,
+        failed: failed.map(toAuctionCard),
+      };
+    }
+
+    default:
+      return { sold: null, failed: [] };
+  }
+}
+
+/**
+ * Reserve fail rate broken down by car model year.
+ *
+ * Only considers reserve listings (nr === 0). Years with fewer than minListings
+ * total reserve listings are excluded to avoid noise from rare vintages.
+ *
+ * Returns an array sorted ascending by modelYear, each entry:
+ *   { modelYear, listed, failed, failRate }
+ */
+export function computeReserveFailByModelYear(records, minListings = 15) {
+  // Accumulate listed and sold counts per model year
+  const byYear = new Map(); // Map<year: number, { listed: number, sold: number }>
+  for (const r of records) {
+    if (r[FIELD.nr] !== 0) continue; // reserve listings only
+    const yr = r[FIELD.yr];
+    if (!yr || yr <= 0) continue;
+    let bucket = byYear.get(yr);
+    if (!bucket) { bucket = { listed: 0, sold: 0 }; byYear.set(yr, bucket); }
+    bucket.listed++;
+    if (r[FIELD.s] === 1) bucket.sold++;
+  }
+
+  // Convert to result array, filter low-count years, sort by year
+  return [...byYear.entries()]
+    .filter(([, b]) => b.listed >= minListings)
+    .map(([yr, b]) => {
+      const failed = b.listed - b.sold;
+      return {
+        modelYear: yr,
+        listed: b.listed,
+        failed,
+        failRate: (failed / b.listed) * 100,
+      };
+    })
+    .sort((a, b) => a.modelYear - b.modelYear);
+}
+
+/**
+ * Ford Mustang reserve fail rate broken down by mileage bucket.
+ *
+ * Filters to records where make === "Ford" and model contains "Mustang"
+ * (case-insensitive) and reserve is set (nr === 0).
+ *
+ * Returns:
+ *   {
+ *     rows: [{ label, listed, failed, failRate }],  // one entry per bucket
+ *     avgFailRate: number  // overall fail rate across all buckets
+ *   }
+ */
+export function computeMustangMileageFail(records) {
+  const BUCKETS = [
+    { label: "<10k",    min: 0,      max: 10000    },
+    { label: "10–25k",  min: 10000,  max: 25000    },
+    { label: "25–50k",  min: 25000,  max: 50000    },
+    { label: "50–75k",  min: 50000,  max: 75000    },
+    { label: "75–100k", min: 75000,  max: 100000   },
+    { label: "100k+",   min: 100000, max: Infinity },
+  ];
+
+  // Initialize accumulator for each bucket
+  const acc = BUCKETS.map((b) => ({ ...b, listed: 0, sold: 0 }));
+
+  for (const r of records) {
+    if (r[FIELD.nr] !== 0) continue; // reserve only
+    const make = DATA.makes[r[FIELD.mk]];
+    if (make !== "Ford") continue;
+    const model = r[FIELD.md] ?? "";
+    if (!model.toLowerCase().includes("mustang")) continue;
+
+    const mi = r[FIELD.mi];
+    for (const bucket of acc) {
+      if (mi >= bucket.min && mi < bucket.max) {
+        bucket.listed++;
+        if (r[FIELD.s] === 1) bucket.sold++;
+        break;
+      }
+    }
+  }
+
+  // Build result rows (include all buckets even if empty, for a consistent x-axis)
+  let totalListed = 0;
+  let totalFailed = 0;
+  const rows = acc.map((b) => {
+    const failed = b.listed - b.sold;
+    totalListed += b.listed;
+    totalFailed += failed;
+    return {
+      label: b.label,
+      listed: b.listed,
+      failed,
+      failRate: b.listed > 0 ? (failed / b.listed) * 100 : 0,
+    };
+  });
+
+  const avgFailRate = totalListed > 0 ? (totalFailed / totalListed) * 100 : 0;
+  return { rows, avgFailRate };
 }

@@ -19,6 +19,7 @@ import {
   GRAY_400,
   GRAY_500,
   INK,
+  INK_SURFACE,
   LIME,
   LIME_DEEP,
   fmtK,
@@ -340,7 +341,7 @@ export function CompareTab() {
                   return (
                     <div
                       className="text-[11px] px-3 py-2 shadow-lg"
-                      style={{ background: INK, color: "white", borderRadius: 4 }}
+                      style={{ background: INK_SURFACE, color: "white", borderRadius: 4 }}
                     >
                       <div className="font-bold mb-1">{d.make}</div>
                       <div>

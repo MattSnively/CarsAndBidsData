@@ -1,10 +1,10 @@
-import { GRAY_100, GRAY_200, GRAY_500, GRAY_700, INK, LIME, LIME_DEEP, LIME_SOFT } from "../tokens.js";
+import { CARD_BG, GRAY_100, GRAY_200, GRAY_500, GRAY_700, INK, LIME, LIME_DEEP, LIME_SOFT } from "../tokens.js";
 
 export function Card({ children, className = "", style = {}, ...rest }) {
   return (
     <div
-      className={`bg-white border ${className}`}
-      style={{ borderColor: GRAY_200, borderRadius: 6, ...style }}
+      className={`border ${className}`}
+      style={{ background: CARD_BG, borderColor: GRAY_200, borderRadius: 6, ...style }}
       {...rest}
     >
       {children}

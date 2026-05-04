@@ -1,4 +1,4 @@
-import { GRAY_200, GRAY_500, GRAY_700, LIME, LIME_DEEP, LIME_SOFT, PRICE_BANDS, monthLabel } from "../tokens.js";
+import { CARD_BG, GRAY_200, GRAY_500, GRAY_700, LIME, LIME_DEEP, LIME_SOFT, PRICE_BANDS, monthLabel } from "../tokens.js";
 
 export function ActiveFilterBar({ filters, setFilters, reset }) {
   const chips = [];
@@ -73,7 +73,7 @@ export function ActiveFilterBar({ filters, setFilters, reset }) {
   return (
     <div
       className="flex items-center gap-2 px-6 py-2.5 border-b flex-wrap"
-      style={{ background: "white", borderColor: GRAY_200 }}
+      style={{ background: CARD_BG, borderColor: GRAY_200 }}
     >
       <div
         className="text-[10.5px] font-semibold uppercase tracking-[0.1em]"
@@ -96,7 +96,7 @@ export function ActiveFilterBar({ filters, setFilters, reset }) {
             {c.label}
             <button
               onClick={c.remove}
-              className="flex items-center justify-center w-4 h-4 transition-colors hover:bg-white"
+              className="flex items-center justify-center w-4 h-4 transition-colors hover-card-bg"
               style={{ borderRadius: 99 }}
               aria-label={`Remove ${c.label}`}
             >

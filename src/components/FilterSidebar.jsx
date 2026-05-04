@@ -2,10 +2,12 @@ import { useFilters } from "./FilterContext.jsx";
 import { getBodies } from "../data.js";
 import {
   BG,
+  CARD_BG,
   GRAY_200,
   GRAY_500,
   GRAY_700,
   INK,
+  INK_SURFACE,
   LIME,
   LIME_DEEP,
   PRICE_BANDS,
@@ -31,9 +33,9 @@ function ToggleButton({ active, onClick, children, full = false }) {
       onClick={onClick}
       className={`${full ? "flex-1" : ""} px-2 py-1.5 text-[11.5px] font-medium transition-colors`}
       style={{
-        background: active ? INK : "white",
+        background: active ? INK_SURFACE : CARD_BG,
         color: active ? "white" : GRAY_700,
-        border: `1px solid ${active ? INK : GRAY_200}`,
+        border: `1px solid ${active ? INK_SURFACE : GRAY_200}`,
         borderRadius: 4,
       }}
     >
@@ -48,7 +50,7 @@ function Chip({ active, onClick, children }) {
       onClick={onClick}
       className="px-2 py-1 text-[10.5px] font-medium transition-colors"
       style={{
-        background: active ? LIME : "white",
+        background: active ? LIME : CARD_BG,
         color: active ? INK : GRAY_700,
         border: `1px solid ${active ? LIME_DEEP : GRAY_200}`,
         borderRadius: 99,
@@ -198,7 +200,7 @@ export function FilterSidebar() {
 
       <div
         className="mt-5 p-3"
-        style={{ background: "white", border: `1px solid ${GRAY_200}`, borderRadius: 4 }}
+        style={{ background: CARD_BG, border: `1px solid ${GRAY_200}`, borderRadius: 4 }}
       >
         <div className="flex items-center gap-1.5 mb-1">
           <div style={{ width: 6, height: 6, borderRadius: 99, background: LIME }} />

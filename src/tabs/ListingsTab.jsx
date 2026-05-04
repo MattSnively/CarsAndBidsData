@@ -3,6 +3,7 @@ import { Card, Pill } from "../components/Primitives.jsx";
 import { useFilters } from "../components/FilterContext.jsx";
 import { applyAllFilters, FIELD, getMakes } from "../data.js";
 import {
+  CARD_BG,
   GRAY_100,
   GRAY_200,
   GRAY_400,
@@ -315,7 +316,7 @@ export function ListingsTab() {
               disabled={page === 0}
               className="px-2.5 py-1 disabled:opacity-30"
               style={{
-                background: "white",
+                background: CARD_BG,
                 border: `1px solid ${GRAY_200}`,
                 color: INK,
                 borderRadius: 4,
@@ -331,7 +332,7 @@ export function ListingsTab() {
               disabled={page >= totalPages - 1}
               className="px-2.5 py-1 disabled:opacity-30"
               style={{
-                background: "white",
+                background: CARD_BG,
                 border: `1px solid ${GRAY_200}`,
                 color: INK,
                 borderRadius: 4,

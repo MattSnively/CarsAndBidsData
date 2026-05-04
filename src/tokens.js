@@ -2,21 +2,40 @@
    DESIGN TOKENS & FORMATTERS
    ============================================================ */
 
-// Brand green sampled from the Cars & Bids logo: RGB(70,204,141)
-export const LIME = "#46cd8d";
-export const LIME_SOFT = "#d8f5e6";
-export const LIME_DEEP = "#2ba36a";
-export const INK = "#0a0a0a";
-export const GRAY_900 = "#1a1a1a";
-export const GRAY_700 = "#3a3a3a";
-export const GRAY_500 = "#7a7a7a";
-export const GRAY_400 = "#a3a3a3";
-export const GRAY_300 = "#d1d1d1";
-export const GRAY_200 = "#e5e5e5";
-export const GRAY_100 = "#f2f2f2";
-export const GRAY_50 = "#f8f8f7";
-export const BG = "#fafaf9";
-export const RED = "#d94444";
+// All color tokens reference CSS custom properties defined in index.css.
+// Light-mode values are on :root; dark-mode overrides are on [data-theme="dark"].
+// This means zero per-component changes are needed for theme switching.
+
+// Brand green — unchanged between modes
+export const LIME = "var(--lime)";
+export const LIME_SOFT = "var(--lime-soft)";
+export const LIME_DEEP = "var(--lime-deep)";
+
+// INK is the primary text/foreground color (inverts: dark in light, light in dark).
+// INK_SURFACE is for elements that need a dark background in BOTH modes
+// (tooltips, active toggle buttons) so white text stays readable.
+export const INK = "var(--ink)";
+export const INK_SURFACE = "var(--ink-surface)";
+
+// CARD_BG is used wherever "white" was previously hardcoded as a background.
+export const CARD_BG = "var(--card-bg)";
+
+export const GRAY_900 = "var(--gray-900)";
+export const GRAY_700 = "var(--gray-700)";
+export const GRAY_500 = "var(--gray-500)";
+export const GRAY_400 = "var(--gray-400)";
+export const GRAY_300 = "var(--gray-300)";
+export const GRAY_200 = "var(--gray-200)";
+export const GRAY_100 = "var(--gray-100)";
+export const GRAY_50 = "var(--gray-50)";
+export const BG = "var(--bg)";
+export const RED = "var(--red)";
+
+// Color palette for multi-make scatter plot series (8 distinct, legible on both themes)
+export const MAKE_COLORS = [
+  "#46cd8d", "#e05757", "#4a9eff", "#f59e0b",
+  "#8b5cf6", "#06b6d4", "#f97316", "#ec4899",
+];
 
 // Price bands — the canonical bucketing used everywhere
 export const PRICE_BANDS = [
