@@ -43,6 +43,13 @@ export function CompareTab() {
   }, [recordsForCompare]);
 
   const makeNames = allMakeStats.map((m) => m.make);
+
+  // Floor to nearest 5% below the actual minimum STR to eliminate dead whitespace
+  const xAxisMin = useMemo(() => {
+    if (allMakeStats.length === 0) return 0;
+    const minStr = Math.min(...allMakeStats.map((m) => m.str));
+    return Math.floor(minStr / 5) * 5;
+  }, [allMakeStats]);
   const [mA, setMA] = useState("Porsche");
   const [mB, setMB] = useState("BMW");
 
@@ -304,7 +311,7 @@ export function CompareTab() {
                 type="number"
                 dataKey="str"
                 name="Sell-through"
-                domain={[0, 100]}
+                domain={[xAxisMin, 100]}
                 tick={{ fill: GRAY_500, fontSize: 10 }}
                 axisLine={false}
                 tickLine={false}
