@@ -241,11 +241,11 @@ export function CompareTab() {
                   <div className="flex items-center justify-center mb-2">
                     <div className="text-[11.5px] font-medium" style={{ color: GRAY_500 }}>
                       {r.label}
-                      <span className="ml-2 text-[10.5px]" style={{ color: GRAY_400 }}>
-                        · {aLarger ? mA : mB} +
-                        <span className="font-semibold" style={{ color: INK }}>
-                          {diff.toFixed(1)}%
-                        </span>
+                      <span
+                        className="ml-2 text-[10.5px] font-semibold"
+                        style={{ color: aLarger ? LIME_DEEP : INK }}
+                      >
+                        · {aLarger ? mA : mB} +{diff.toFixed(1)}%
                       </span>
                     </div>
                   </div>
