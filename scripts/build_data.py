@@ -1,7 +1,11 @@
 """
-Build the dashboard data file from data/carsandbids_master.csv.
+Build the dashboard data files from data/carsandbids_master.csv.
 
-Output: public/data/auctions.json
+Outputs:
+  public/data/auctions.json — the packed dataset every tab loads at startup
+  public/data/details.json  — per-listing detail sidecar, loaded lazily by the
+                              Model page only (see DETAIL SIDECAR below)
+
 Format: { makes: [...], bodies: [...], colors: [...], records: [[...], ...], meta: {...} }
 
 Each record is a 15-element array:
@@ -14,8 +18,21 @@ dayOffset:   days since 2021-08-01 (the dataset start). Day 0 = Aug 1, 2021.
 colorIdx:    index into the colors lookup array (grouped by major color family).
 num_comments: integer comment count for auction engagement analysis.
 
-Run: python scripts/build_data.py [path_to_csv]
+DETAIL SIDECAR
+Fields the tooltip on the Model page needs that are too bulky to justify adding
+to auctions.json, which every visitor downloads on every tab (~600 KB gzipped;
+these fields would roughly double it). Split out so only the Model page pays.
+
+Format: { url_prefix, ext_colors: [...], drivetrains: [...], engines: [...],
+          locations: [...], rows: [[urlPath, colorIx, driveIx, engineIx, locIx], ...] }
+
+rows[i] describes records[i]. That correspondence is the whole contract, so both
+lists are built as pairs and sorted together below — never sorted independently.
+A -1 index means the field was missing for that listing.
+
+Run: py -3 scripts/build_data.py [path_to_csv]
 Defaults to ./data/carsandbids_master.csv (relative to the repo root).
+Note: pandas is importable via the `py -3` launcher, not necessarily `python`.
 """
 
 import json
@@ -43,6 +60,15 @@ COLOR_GROUPS = [
     ("Yellow/Orange",["yellow", "gold", "lemon", "sunburst", "orange", "bronze", "amber", "dakar", "sakhir"]),
 ]
 COLOR_OTHER = "Other"
+
+# Every auction URL in the dataset shares this prefix, so the sidecar stores only
+# the path after it and the client re-attaches it.
+URL_PREFIX = "https://carsandbids.com/auctions/"
+
+# Sidecar fields that are dictionary-encoded. Each has few enough distinct values
+# relative to 33k rows that an index costs far less than the repeated string
+# (exterior_color 4.7k distinct, drivetrain 3, engine 735, location 8.3k).
+DETAIL_DICT_FIELDS = ["exterior_color", "drivetrain", "engine", "location"]
 
 
 def group_color(color_str) -> str:
@@ -85,6 +111,23 @@ def safe_int(value, default: int = 0) -> int:
         return default
 
 
+def normalize_model(value) -> str:
+    """
+    Model name with the scraper's UI leakage removed.
+
+    The listing scraper captures the model cell's full inner text, which on some
+    cards includes the "Save" button label on a second line. That left 1,766 of
+    33,021 rows (5.3%) as "3 Series\\nSave" rather than "3 Series", splitting
+    every popular model into two entries and quietly excluding those listings
+    whenever someone filters on the clean name.
+
+    Taking the first line fixes it at the source; makes, bodies and colors were
+    checked and are unaffected.
+    """
+    s = safe_str(value, max_len=None)
+    return s.split("\n", 1)[0].strip()[:32]
+
+
 def safe_str(value, default: str = "", max_len: int | None = None) -> str:
     if pd.isna(value):
         return default
@@ -115,13 +158,41 @@ def build(csv_path: Path, output_path: Path) -> None:
     color_ix = {c: i for i, c in enumerate(colors)}
     print(f"  {len(makes)} unique makes, {len(bodies)} unique body styles, {len(colors)} color groups")
 
-    # Pack records
-    records = []
+    # Build the sidecar's dictionaries up front so the row loop can just index
+    # into them. Sorted for determinism — the index must not shift between runs.
+    detail_values = {}
+    detail_index = {}
+    for field in DETAIL_DICT_FIELDS:
+        values = sorted({str(v) for v in df[field].dropna() if str(v).strip()})
+        detail_values[field] = values
+        detail_index[field] = {v: i for i, v in enumerate(values)}
+    print(
+        "  sidecar dictionaries: "
+        + ", ".join(f"{f} {len(detail_values[f])}" for f in DETAIL_DICT_FIELDS)
+    )
+
+    def detail_ix(row, field):
+        """Dictionary index for a detail field, or -1 when the value is missing."""
+        value = safe_str(row.get(field))
+        return detail_index[field].get(value, -1) if value.strip() else -1
+
+    # Pack records, carrying each row's sidecar detail alongside it. The two are
+    # kept as pairs through the sort below because rows[i] in details.json must
+    # describe records[i] — sorting them independently would silently mislabel
+    # every tooltip.
+    paired = []
     for _, r in df.iterrows():
+        url = safe_str(r.get("url"))
+        detail = [
+            # Keep any URL that doesn't match the expected prefix intact; the
+            # client re-attaches the prefix only to relative paths.
+            url[len(URL_PREFIX):] if url.startswith(URL_PREFIX) else url,
+            *(detail_ix(r, field) for field in DETAIL_DICT_FIELDS),
+        ]
         record = [
             safe_int(r.get("year")),
             make_ix.get(safe_str(r.get("make")), 0),
-            safe_str(r.get("model"), max_len=32),
+            normalize_model(r.get("model")),
             safe_int(r.get("sale_price")),
             safe_int(r.get("mileage")),
             safe_int(r.get("num_bids")),
@@ -135,10 +206,14 @@ def build(csv_path: Path, output_path: Path) -> None:
             color_ix.get(group_color(r.get("exterior_color")), color_ix[COLOR_OTHER]),  # field 13 — color group
             safe_int(r.get("num_comments")),   # field 14 — comment count (engagement signal)
         ]
-        records.append(record)
+        paired.append((record, detail))
 
-    # Sort by date for stable ordering
-    records.sort(key=lambda x: x[11])
+    # Sort by date for stable ordering. Sorting the pairs on the record's month
+    # offset keeps each detail welded to its record; Python's sort is stable, so
+    # the resulting record order is identical to sorting records alone.
+    paired.sort(key=lambda pair: pair[0][11])
+    records = [record for record, _ in paired]
+    details = [detail for _, detail in paired]
 
     # Compute meta
     sold_count = sum(1 for r in records if r[7] == 1)
@@ -183,13 +258,31 @@ def build(csv_path: Path, output_path: Path) -> None:
     with open(output_path, "w") as f:
         json.dump(output, f, separators=(",", ":"))
 
+    detail_output = {
+        "schema_version": 1,
+        "url_prefix": URL_PREFIX,
+        "ext_colors": detail_values["exterior_color"],
+        "drivetrains": detail_values["drivetrain"],
+        "engines": detail_values["engine"],
+        "locations": detail_values["location"],
+        # rows[i] describes records[i] in auctions.json
+        "rows": details,
+    }
+    detail_path = output_path.parent / "details.json"
+    with open(detail_path, "w") as f:
+        json.dump(detail_output, f, separators=(",", ":"))
+
     size_kb = output_path.stat().st_size / 1024
+    detail_kb = detail_path.stat().st_size / 1024
+    missing_url = sum(1 for d in details if not d[0])
     print(
         f"\nWrote {output_path} ({size_kb:.0f} KB)\n"
         f"  Records:   {len(records):,}\n"
         f"  Sold:      {sold_count:,}  ({sold_count / len(records) * 100:.1f}% STR)\n"
         f"  GMV:       ${gmv / 1e6:.1f}M\n"
         f"  Span:      {months_total} months from {meta['epoch']}\n"
+        f"\nWrote {detail_path} ({detail_kb:.0f} KB)\n"
+        f"  Detail rows: {len(details):,}  (missing url: {missing_url:,})\n"
     )
 
 
