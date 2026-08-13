@@ -57,7 +57,13 @@ DELAY = 3.0
 
 
 def newly_canceled() -> pd.DataFrame:
-    """Rows the backfill called canceled that the master CSV did not."""
+    """
+    Rows the backfill called canceled that the previous data did not.
+
+    Compares against the pre-apply snapshot when one exists. Once --apply has
+    run, the master itself carries the new statuses, so comparing to it would
+    report nothing as reclassified.
+    """
     if not CHECKPOINT.exists():
         print(f"ERROR: no checkpoint at {CHECKPOINT}", file=sys.stderr)
         sys.exit(1)
@@ -71,7 +77,10 @@ def newly_canceled() -> pd.DataFrame:
             if r.get("ok") and r.get("auction_status") == "canceled":
                 scraped[r["url"]] = r
 
-    df = pd.read_csv(MASTER, low_memory=False)
+    baseline = MASTER.with_suffix(".csv.bak")
+    source = baseline if baseline.exists() else MASTER
+    print(f"  baseline: {source.name}")
+    df = pd.read_csv(source, low_memory=False)
     df = df[df["url"].isin(scraped)]
     rows = []
     for _, row in df.iterrows():
