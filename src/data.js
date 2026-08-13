@@ -42,6 +42,13 @@ let DATA = {
 let MODEL_INDEX = null;
 let MAKE_COUNTS = null;
 
+// Per-listing detail sidecar (public/data/details.json). Deliberately NOT loaded
+// by loadData() — it is comparable in size to the whole packed dataset and only
+// the Model page needs it, so every other tab avoids paying for it. DETAILS holds
+// the parsed file; DETAILS_PROMISE de-dupes concurrent first loads.
+let DETAILS = null;
+let DETAILS_PROMISE = null;
+
 export async function loadData(baseUrl = "/") {
   // Vite's import.meta.env.BASE_URL always ends with a slash, so we can safely
   // concatenate. For GitHub Pages project pages this is "/<repo-name>/";
@@ -55,7 +62,70 @@ export async function loadData(baseUrl = "/") {
   DATA = json;
   MODEL_INDEX = null;
   MAKE_COUNTS = null;
+  DETAILS = null;
+  DETAILS_PROMISE = null;
   return DATA;
+}
+
+/**
+ * Loads the detail sidecar on demand. Safe to call repeatedly and from several
+ * components at once — the in-flight promise is shared and the result cached.
+ *
+ * Rejects on failure rather than throwing at the call site; callers are expected
+ * to degrade to a tooltip without the extra fields instead of breaking the page.
+ */
+export function loadDetails(baseUrl = "/") {
+  if (DETAILS) return Promise.resolve(DETAILS);
+  if (DETAILS_PROMISE) return DETAILS_PROMISE;
+  DETAILS_PROMISE = fetch(`${baseUrl}data/details.json`)
+    .then((res) => {
+      if (!res.ok) {
+        throw new Error(
+          `Failed to load details.json: ${res.status} ${res.statusText}`,
+        );
+      }
+      return res.json();
+    })
+    .then((json) => {
+      DETAILS = json;
+      return json;
+    })
+    .catch((err) => {
+      // Clear the cached promise so a later attempt can retry rather than
+      // permanently resolving to the same failure.
+      DETAILS_PROMISE = null;
+      throw err;
+    });
+  return DETAILS_PROMISE;
+}
+
+export const getDetails = () => DETAILS;
+
+/**
+ * Detail fields for one record, addressed by its index in DATA.records.
+ *
+ * Returns null when the sidecar has not been loaded, so callers can render a
+ * reduced tooltip without branching on load state themselves. A -1 dictionary
+ * index means the source had no value for that field.
+ */
+export function getListingDetail(recordIndex) {
+  if (!DETAILS) return null;
+  const row = DETAILS.rows?.[recordIndex];
+  if (!row) return null;
+  const [urlPath, colorIx, driveIx, engineIx, locIx] = row;
+  const lookup = (table, ix) => (ix >= 0 ? (DETAILS[table]?.[ix] ?? null) : null);
+  return {
+    // Absolute URLs are stored intact by the builder; only paths need the prefix.
+    url: urlPath
+      ? urlPath.startsWith("http")
+        ? urlPath
+        : `${DETAILS.url_prefix}${urlPath}`
+      : null,
+    exteriorColor: lookup("ext_colors", colorIx),
+    drivetrain: lookup("drivetrains", driveIx),
+    engine: lookup("engines", engineIx),
+    location: lookup("locations", locIx),
+  };
 }
 
 export const getData = () => DATA;
