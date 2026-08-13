@@ -523,7 +523,14 @@ export function ModelTab() {
         <Card>
           <CardHeader
             title="Price distribution"
-            sub={`Where ${model} sales land · sold listings only`}
+            sub={
+              `Where ${model} sales land · sold listings only` +
+              // Name the gap rather than let these sales vanish from the chart
+              // without explanation — they used to land in <$5k instead.
+              (kpis.priceUnknown > 0
+                ? ` · ${kpis.priceUnknown} sale${kpis.priceUnknown === 1 ? "" : "s"} with no recorded price excluded`
+                : "")
+            }
           />
           {kpis.totalSold > 0 ? (
             <ResponsiveContainer width="100%" height={200}>

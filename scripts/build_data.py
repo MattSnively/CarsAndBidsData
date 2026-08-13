@@ -18,6 +18,14 @@ dayOffset:   days since 2021-08-01 (the dataset start). Day 0 = Aug 1, 2021.
 colorIdx:    index into the colors lookup array (grouped by major color family).
 num_comments: integer comment count for auction engagement analysis.
 
+sale_price:  PRICE_UNKNOWN (-1) when the source row has no price, never 0. The
+             scraper can record sold=True without capturing a price, and packing
+             that as 0 made "we don't know" indistinguishable from "sold for
+             nothing" — those rows then counted as real sub-$5k sales on every
+             price distribution and dragged avgPrice down. The client treats
+             negative price as "exclude from money math" (see hasPrice in
+             data.js); STR still counts the sale, because the sale did happen.
+
 DETAIL SIDECAR
 Fields the tooltip on the Model page needs that are too bulky to justify adding
 to auctions.json, which every visitor downloads on every tab (~600 KB gzipped;
@@ -46,6 +54,10 @@ import pandas as pd
 EPOCH_YEAR = 2021
 EPOCH_MONTH = 8  # August
 EPOCH_DATE = date_type(2021, 8, 1)
+
+# Sentinel for "the source had no sale price". Must stay negative so the client's
+# hasPrice() check and the existing `p > 0` guards both exclude it.
+PRICE_UNKNOWN = -1
 
 # Color grouping: map exterior_color strings to one of 8 major color families.
 # Each tuple is (group_label, [substring_keywords]).  Order matters — first match wins.
@@ -193,12 +205,15 @@ def build(csv_path: Path, output_path: Path) -> None:
             safe_int(r.get("year")),
             make_ix.get(safe_str(r.get("make")), 0),
             normalize_model(r.get("model")),
-            safe_int(r.get("sale_price")),
+            safe_int(r.get("sale_price"), PRICE_UNKNOWN),
             safe_int(r.get("mileage")),
             safe_int(r.get("num_bids")),
             safe_int(r.get("num_views")),
-            1 if bool(r.get("sold", False)) else 0,
-            1 if bool(r.get("is_no_reserve", False)) else 0,
+            # Identity, not truthiness: pandas reads these columns as object dtype
+            # containing True/False/NaN, and bool(nan) is True — which silently
+            # flagged every row with no scraped value as a sale.
+            1 if r.get("sold") is True else 0,
+            1 if r.get("is_no_reserve") is True else 0,
             body_ix.get(safe_str(r.get("body_style")), 0),
             normalize_transmission(r.get("transmission")),
             month_offset(r["end_date"]),
@@ -217,16 +232,21 @@ def build(csv_path: Path, output_path: Path) -> None:
 
     # Compute meta
     sold_count = sum(1 for r in records if r[7] == 1)
-    gmv = sum(r[3] for r in records if r[7] == 1)
+    gmv = sum(r[3] for r in records if r[7] == 1 and r[3] >= 0)
+    price_unknown = sum(1 for r in records if r[7] == 1 and r[3] < 0)
     months_total = max(r[11] for r in records) + 1
 
     meta = {
         "total_listings": len(records),
         "total_sold": sold_count,
+        # Sold listings whose price the scraper never captured. Surfaced in meta so
+        # the UI can say how much of the sold set is missing from the money math.
+        "price_unknown": price_unknown,
         "total_gmv": gmv,
         "months_total": months_total,
         "epoch": f"{EPOCH_YEAR}-{EPOCH_MONTH:02d}",
-        "schema_version": 3,
+        # 4: sale_price uses PRICE_UNKNOWN (-1) for missing instead of 0
+        "schema_version": 4,
         "field_index": {
             "year": 0,
             "make_ix": 1,
@@ -244,6 +264,7 @@ def build(csv_path: Path, output_path: Path) -> None:
             "color_ix": 13,
             "comments": 14,
         },
+        "price_unknown_sentinel": PRICE_UNKNOWN,
     }
 
     output = {
@@ -280,6 +301,7 @@ def build(csv_path: Path, output_path: Path) -> None:
         f"  Records:   {len(records):,}\n"
         f"  Sold:      {sold_count:,}  ({sold_count / len(records) * 100:.1f}% STR)\n"
         f"  GMV:       ${gmv / 1e6:.1f}M\n"
+        f"  No price:  {price_unknown:,} sold listings ({price_unknown / sold_count * 100:.1f}% of sold, excluded from GMV)\n"
         f"  Span:      {months_total} months from {meta['epoch']}\n"
         f"\nWrote {detail_path} ({detail_kb:.0f} KB)\n"
         f"  Detail rows: {len(details):,}  (missing url: {missing_url:,})\n"
