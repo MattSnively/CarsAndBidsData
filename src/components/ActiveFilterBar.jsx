@@ -12,6 +12,15 @@ export function ActiveFilterBar({ filters, setFilters, reset }) {
     }),
   );
 
+  filters.models.forEach((m) =>
+    chips.push({
+      label: m,
+      key: `md-${m}`,
+      remove: () =>
+        setFilters((f) => ({ ...f, models: f.models.filter((x) => x !== m) })),
+    }),
+  );
+
   filters.priceBands.forEach((b) => {
     const band = PRICE_BANDS.find((p) => p.id === b);
     if (!band) return;

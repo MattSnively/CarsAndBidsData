@@ -35,6 +35,13 @@ let DATA = {
   meta: null,
 };
 
+// Lazily-built lookups for the brand/model filter controls. Model is stored as a
+// raw string per record (not dictionary-encoded like make/body), so the list of
+// distinct models has to be derived from a full pass over the records. Built once
+// on first use and cleared by loadData().
+let MODEL_INDEX = null;
+let MAKE_COUNTS = null;
+
 export async function loadData(baseUrl = "/") {
   // Vite's import.meta.env.BASE_URL always ends with a slash, so we can safely
   // concatenate. For GitHub Pages project pages this is "/<repo-name>/";
@@ -46,6 +53,8 @@ export async function loadData(baseUrl = "/") {
   }
   const json = await res.json();
   DATA = json;
+  MODEL_INDEX = null;
+  MAKE_COUNTS = null;
   return DATA;
 }
 
@@ -55,12 +64,51 @@ export const getBodies = () => DATA.bodies;
 export const getColors = () => DATA.colors;
 export const getMeta = () => DATA.meta;
 
+/**
+ * Distinct models with their listing count and the makes they appear under,
+ * sorted by count descending so typeahead suggestions lead with the models
+ * that have the most data behind them.
+ *
+ * `makes` is a Set because 37 of ~1,650 model names appear under more than one
+ * make ("Continental", "Suburban", "M2"), and the model typeahead scopes its
+ * suggestions to the selected brands.
+ */
+export function getModels() {
+  if (MODEL_INDEX) return MODEL_INDEX;
+  const map = new Map();
+  for (const r of DATA.records) {
+    const model = r[FIELD.md];
+    if (!model) continue;
+    let entry = map.get(model);
+    if (!entry) {
+      entry = { model, count: 0, makes: new Set() };
+      map.set(model, entry);
+    }
+    entry.count++;
+    entry.makes.add(DATA.makes[r[FIELD.mk]]);
+  }
+  MODEL_INDEX = [...map.values()].sort((a, b) => b.count - a.count);
+  return MODEL_INDEX;
+}
+
+/** Listing count per make, for the brand filter's option list. */
+export function getMakeCounts() {
+  if (MAKE_COUNTS) return MAKE_COUNTS;
+  const counts = new Map(DATA.makes.map((m) => [m, 0]));
+  for (const r of DATA.records) {
+    const make = DATA.makes[r[FIELD.mk]];
+    counts.set(make, (counts.get(make) ?? 0) + 1);
+  }
+  MAKE_COUNTS = counts;
+  return MAKE_COUNTS;
+}
+
 /* ============================================================
    FILTER APPLICATION
    ============================================================
    Two filter categories:
-     - UNIVERSE filters (makes, bodies, reserve, transmission, monthRange,
-       mileageMax) change which listings exist. They affect both the
+     - UNIVERSE filters (makes, models, bodies, reserve, transmission,
+       monthRange, mileageMax) change which listings exist. They affect both the
        numerator (sold) and denominator (listed) of STR.
      - SOLD-SIDE filters (priceBands) only narrow the sold subset. A
        price band can't be applied to an unsold listing because there's
@@ -85,6 +133,11 @@ function passesUniverse(rec, filters) {
       (name) => DATA.bodies.indexOf(name) === ix,
     );
     if (!allowed) return false;
+  }
+  // Model is an exact string match — the typeahead resolves to specific model
+  // values, so "996 911" narrows to that generation and not every 911.
+  if (filters.models.length && !filters.models.includes(rec[FIELD.md])) {
+    return false;
   }
   if (filters.reserve === "reserve" && rec[FIELD.nr] === 1) return false;
   if (filters.reserve === "noReserve" && rec[FIELD.nr] === 0) return false;

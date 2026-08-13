@@ -52,6 +52,7 @@ export const PRICE_BANDS = [
 // Initial filter state — empty = no filters active
 export const initialFilters = {
   makes: [],
+  models: [], // exact model strings, e.g. ["996 911"] — OR'd together
   priceBands: [],
   reserve: null, // null | "reserve" | "noReserve"
   bodies: [],
@@ -62,6 +63,7 @@ export const initialFilters = {
 
 export const isFilterActive = (f) =>
   f.makes.length > 0 ||
+  f.models.length > 0 ||
   f.priceBands.length > 0 ||
   f.reserve !== null ||
   f.bodies.length > 0 ||

@@ -1,5 +1,7 @@
+import { useMemo } from "react";
 import { useFilters } from "./FilterContext.jsx";
-import { getBodies } from "../data.js";
+import { FilterMultiSelect } from "./FilterMultiSelect.jsx";
+import { getBodies, getMakeCounts, getMakes, getModels } from "../data.js";
 import {
   BG,
   CARD_BG,
@@ -66,6 +68,23 @@ export function FilterSidebar() {
   const { filters, setFilters, reset } = useFilters();
   const bodies = getBodies();
 
+  const makeOptions = useMemo(() => {
+    const counts = getMakeCounts();
+    return getMakes()
+      .map((m) => ({ value: m, count: counts.get(m) ?? 0 }))
+      .sort((a, b) => b.count - a.count);
+  }, []);
+
+  // Model suggestions narrow to the selected brands purely as a usability aid —
+  // the model filter itself stays independent and ANDs with the brand filter.
+  const modelOptions = useMemo(() => {
+    const all = getModels();
+    const scoped = filters.makes.length
+      ? all.filter((m) => filters.makes.some((mk) => m.makes.has(mk)))
+      : all;
+    return scoped.map((m) => ({ value: m.model, count: m.count }));
+  }, [filters.makes]);
+
   return (
     <aside
       className="px-5 py-5 border-r"
@@ -91,6 +110,29 @@ export function FilterSidebar() {
           Reset all
         </button>
       </div>
+
+      <Section label="Brand">
+        <FilterMultiSelect
+          mode="list"
+          noun="brand"
+          options={makeOptions}
+          selected={filters.makes}
+          onChange={(makes) => setFilters((f) => ({ ...f, makes }))}
+          placeholder="All brands"
+          searchPlaceholder="Search brands…"
+        />
+      </Section>
+
+      <Section label="Model">
+        <FilterMultiSelect
+          mode="typeahead"
+          noun="model"
+          options={modelOptions}
+          selected={filters.models}
+          onChange={(models) => setFilters((f) => ({ ...f, models }))}
+          placeholder="Type a model…"
+        />
+      </Section>
 
       <Section label="Reserve">
         <div className="flex gap-1">
