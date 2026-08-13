@@ -17,3 +17,8 @@ venv/
 weekly_update.*
 biweekly_update.*
 carsandbids_7day.*
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
