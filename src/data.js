@@ -119,26 +119,41 @@ export function getMakeCounts() {
      - applyAllFilters()      — for GMV, avg price, sold-only views
    ============================================================ */
 
-function passesUniverse(rec, filters) {
-  if (filters.makes.length) {
-    const ix = rec[FIELD.mk];
-    const allowed = filters.makes.some(
-      (name) => DATA.makes.indexOf(name) === ix,
-    );
-    if (!allowed) return false;
-  }
-  if (filters.bodies.length) {
-    const ix = rec[FIELD.bs];
-    const allowed = filters.bodies.some(
-      (name) => DATA.bodies.indexOf(name) === ix,
-    );
-    if (!allowed) return false;
-  }
+/**
+ * Resolves the name-based filters (makes, bodies, models) into the form the
+ * per-record test wants, once per pass rather than once per record.
+ *
+ * Makes and bodies are stored packed as indices, so filtering by name means
+ * translating the selected names into indices. Doing that inside the record loop
+ * cost an indexOf scan of the 170-entry makes table per record per selected make
+ * — ~20ms per pass at 20 makes, on every filter change and across every chart.
+ *
+ * A null field means "this filter is inactive", which keeps the checks below to
+ * a single branch when nothing is selected.
+ */
+function buildUniverseLookups(filters) {
+  const indexSet = (names, table) => {
+    if (!names.length) return null;
+    const set = new Set();
+    for (const name of names) {
+      const ix = table.indexOf(name);
+      if (ix >= 0) set.add(ix); // unknown names simply match nothing
+    }
+    return set;
+  };
+  return {
+    makeIx: indexSet(filters.makes, DATA.makes),
+    bodyIx: indexSet(filters.bodies, DATA.bodies),
+    models: filters.models.length ? new Set(filters.models) : null,
+  };
+}
+
+function passesUniverse(rec, filters, lookups) {
+  if (lookups.makeIx && !lookups.makeIx.has(rec[FIELD.mk])) return false;
+  if (lookups.bodyIx && !lookups.bodyIx.has(rec[FIELD.bs])) return false;
   // Model is an exact string match — the typeahead resolves to specific model
   // values, so "996 911" narrows to that generation and not every 911.
-  if (filters.models.length && !filters.models.includes(rec[FIELD.md])) {
-    return false;
-  }
+  if (lookups.models && !lookups.models.has(rec[FIELD.md])) return false;
   if (filters.reserve === "reserve" && rec[FIELD.nr] === 1) return false;
   if (filters.reserve === "noReserve" && rec[FIELD.nr] === 0) return false;
   if (filters.transmission && rec[FIELD.tx] !== filters.transmission) return false;
@@ -163,13 +178,15 @@ function passesPriceBand(rec, filters) {
 
 /** Records that pass the universe filters (used for STR-bearing charts). */
 export function applyUniverseFilters(filters) {
-  return DATA.records.filter((r) => passesUniverse(r, filters));
+  const lookups = buildUniverseLookups(filters);
+  return DATA.records.filter((r) => passesUniverse(r, filters, lookups));
 }
 
 /** Records that pass ALL filters including price band (used for sold-only views). */
 export function applyAllFilters(filters) {
+  const lookups = buildUniverseLookups(filters);
   return DATA.records.filter(
-    (r) => passesUniverse(r, filters) && passesPriceBand(r, filters),
+    (r) => passesUniverse(r, filters, lookups) && passesPriceBand(r, filters),
   );
 }
 
