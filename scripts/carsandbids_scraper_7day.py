@@ -59,6 +59,24 @@ OUTCOME_PHRASES = [
 SOLD_STATUSES = frozenset({'sold', 'sold_after'})
 
 
+def apply_outcome(record: dict, status: str, price: Optional[int]) -> None:
+    """
+    Record an auction's outcome and route its figure to the right money field.
+
+    Every field is written on every branch. The card pass and the detail pass
+    both populate the same record and the later one wins, so leaving a key
+    untouched lets a stale value survive — which is how "Bid to" figures ended
+    up in sale_price and made unsold auctions look like sales.
+    """
+    record['auction_status'] = status
+    record['sold'] = status in SOLD_STATUSES
+    record['sale_price'] = price if record['sold'] else None
+    # A live sale clears at the winning bid, so the two are the same number. A
+    # "Sold After" deal is struck later and the page never shows the live high
+    # bid, so leave it empty rather than infer it from the negotiated price.
+    record['high_bid'] = price if status in ('sold', 'no_sale') else None
+
+
 def classify_outcome(outcome_text: str) -> Optional[str]:
     """
     Map the bid bar's result phrase to an auction_status value.
@@ -277,16 +295,15 @@ class CarsAndBidsScraper:
                     if text and len(text) > 5:
                         listing['title'] = text.strip().split('\n')[0]
 
-                # Try to find price in parent or sibling elements
+                # Outcome from the card. Cards carry the same labelled markup as
+                # the detail page, so the price comes from span.bid-value rather
+                # than a regex over the card's whole text — and a card showing
+                # "Bid to" no longer lands its figure in sale_price.
                 parent = await link.query_selector('xpath=..')
                 if parent:
-                    parent_text = await parent.inner_text()
-                    if 'Sold for' in parent_text:
-                        listing['sold'] = True
-                        listing['sale_price'] = parse_price(parent_text)
-                    elif 'Bid to' in parent_text:
-                        listing['sold'] = False
-                        listing['sale_price'] = parse_price(parent_text)
+                    status, price = await self.read_outcome(parent)
+                    if status:
+                        apply_outcome(listing, status, price)
 
                     # Try to find end date in grandparent (card container)
                     grandparent = await parent.query_selector('xpath=..')
@@ -312,6 +329,29 @@ class CarsAndBidsScraper:
                 continue
 
         return listings, should_continue
+
+    async def read_outcome(self, scope):
+        """
+        Auction result and its figure, read from the labelled bid-bar elements.
+
+        `scope` is anything exposing query_selector that contains the bid bar —
+        the page on a detail view, or a card's container on the listing grid.
+        Both render the same markup: li.ended holds the result phrase and
+        span.bid-value holds the figure on its own, so neither has to be teased
+        out of surrounding prose.
+
+        Returns (status, price); status is None when the phrase is missing or
+        unrecognised, in which case the caller should leave the record alone.
+        """
+        el = await scope.query_selector('li.ended .value')
+        if not el:
+            return None, None
+        status = classify_outcome(await el.inner_text())
+        if not status:
+            return None, None
+        price_el = await el.query_selector('.bid-value')
+        price = parse_price(await price_el.inner_text()) if price_el else None
+        return status, price
 
     async def scrape_detail_page(self, url: str) -> dict:
         """Scrape detailed info from a listing page."""
@@ -436,40 +476,12 @@ class CarsAndBidsScraper:
                 )
             details['is_no_reserve'] = no_reserve_badge is not None
 
-            # Auction outcome and its price, read from the bid bar.
-            #
-            # The result lives in a labelled element: li.ended holds the phrase
-            # ("Sold for", "Sold After for", "Bid to", "Auction Canceled") and,
-            # when there is a figure, span.bid-value holds it on its own.
-            #
-            # The previous approach scanned every h4 for the word "Sold" and
-            # regexed the first dollar amount out of its parent's inner text,
-            # letting the last match win. That picked up unrelated figures from
-            # nearby prose — a $75,000 sale was recorded as $80 — and had no
-            # concept of a canceled auction, so cancellations became sales.
-            outcome_el = await self.page.query_selector('ul.bid-stats li.ended span.value')
-            if outcome_el:
-                status = classify_outcome(await outcome_el.inner_text())
-                if status:
-                    price_el = await outcome_el.query_selector('span.bid-value')
-                    price = parse_price(await price_el.inner_text()) if price_el else None
-                    details['auction_status'] = status
-                    details['sold'] = status in SOLD_STATUSES
-                    # Assign both money fields on every branch. The listing-card
-                    # pass writes a "Bid to" figure into sale_price, so leaving a
-                    # key untouched here would let that leak through and make an
-                    # unsold auction look like a sale.
-                    details['sale_price'] = price if details['sold'] else None
-                    if status == 'sold':
-                        # A live sale clears at the winning bid, so they are the
-                        # same number. "Sold After" is negotiated afterwards, so
-                        # its live high bid is a different figure the page does
-                        # not show — leave high_bid empty rather than guess.
-                        details['high_bid'] = price
-                    elif status == 'no_sale':
-                        details['high_bid'] = price
-                    else:
-                        details['high_bid'] = None
+            # Auction outcome. Replaces an h4 scan for the word "Sold" that
+            # regexed the first dollar amount out of the surrounding prose — it
+            # recorded a $75,000 sale as $80 and had no concept of cancellation.
+            status, price = await self.read_outcome(self.page)
+            if status:
+                apply_outcome(details, status, price)
 
             # Get modifications section
             mods_section = await self.page.query_selector('h4:has-text("Modifications")')
