@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "CarsAndBidsData",
+  "project_id": "eaf8c1ab-ce41-4629-a569-198456ede05d"
+}
