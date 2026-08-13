@@ -26,6 +26,18 @@ export const FIELD = {
   cm: 14, // num_comments (engagement signal)
 };
 
+/**
+ * True when the record carries a real sale price.
+ *
+ * build_data.py packs missing prices as -1 (PRICE_UNKNOWN) rather than 0, because
+ * the scraper can record a sale without capturing its price. Those rows are real
+ * sales — they belong in STR — but they must stay out of GMV, averages, medians
+ * and the price distribution, where a 0 would read as "sold for nothing".
+ */
+export function hasPrice(rec) {
+  return rec[FIELD.p] >= 0;
+}
+
 // Module-level data, populated by loadData()
 let DATA = {
   makes: [],
@@ -271,13 +283,17 @@ export function computeKPIs(records) {
     return { totalListed: 0, totalSold: 0, totalGMV: 0, str: 0, avgPrice: 0, avgBids: 0 };
   }
   let sold = 0;
+  let priced = 0;
   let gmv = 0;
   let bids = 0;
   for (const r of records) {
     bids += r[FIELD.b];
     if (r[FIELD.s] === 1) {
       sold++;
-      gmv += r[FIELD.p];
+      if (hasPrice(r)) {
+        priced++;
+        gmv += r[FIELD.p];
+      }
     }
   }
   return {
@@ -285,7 +301,10 @@ export function computeKPIs(records) {
     totalSold: sold,
     totalGMV: gmv,
     str: (sold / total) * 100,
-    avgPrice: sold > 0 ? gmv / sold : 0,
+    // Averaged over sales with a known price, not all sales — dividing by `sold`
+    // would spread the same GMV across listings that contributed nothing to it.
+    avgPrice: priced > 0 ? gmv / priced : 0,
+    priceUnknown: sold - priced,
     avgBids: bids / total,
   };
 }
@@ -303,11 +322,15 @@ export function computeKPIsSplit(universeRecords, soldRecords) {
     if (r[FIELD.s] === 1) universeSold++;
   }
   let bandedSold = 0;
+  let bandedPriced = 0;
   let bandedGMV = 0;
   for (const r of soldRecords) {
     if (r[FIELD.s] === 1) {
       bandedSold++;
-      bandedGMV += r[FIELD.p];
+      if (hasPrice(r)) {
+        bandedPriced++;
+        bandedGMV += r[FIELD.p];
+      }
     }
   }
   return {
@@ -315,7 +338,8 @@ export function computeKPIsSplit(universeRecords, soldRecords) {
     totalSold: bandedSold, // sold listings that match the price band filter
     totalGMV: bandedGMV,
     str: total > 0 ? (universeSold / total) * 100 : 0, // STR ignores price band
-    avgPrice: bandedSold > 0 ? bandedGMV / bandedSold : 0,
+    avgPrice: bandedPriced > 0 ? bandedGMV / bandedPriced : 0,
+    priceUnknown: bandedSold - bandedPriced,
     avgBids: total > 0 ? universeBids / total : 0,
   };
 }
@@ -326,20 +350,23 @@ export function computeByMake(records, topN = 10) {
     const mk = DATA.makes[r[FIELD.mk]];
     let m = map.get(mk);
     if (!m) {
-      m = { make: mk, listings: 0, sold: 0, gmv: 0, bids: 0 };
+      m = { make: mk, listings: 0, sold: 0, priced: 0, gmv: 0, bids: 0 };
       map.set(mk, m);
     }
     m.listings++;
     m.bids += r[FIELD.b];
     if (r[FIELD.s] === 1) {
       m.sold++;
-      m.gmv += r[FIELD.p];
+      if (hasPrice(r)) {
+        m.priced++;
+        m.gmv += r[FIELD.p];
+      }
     }
   }
   const arr = [...map.values()].map((m) => ({
     ...m,
     str: m.listings > 0 ? (m.sold / m.listings) * 100 : 0,
-    avgPrice: m.sold > 0 ? m.gmv / m.sold : 0,
+    avgPrice: m.priced > 0 ? m.gmv / m.priced : 0,
     avgBids: m.listings > 0 ? m.bids / m.listings : 0,
   }));
   arr.sort((a, b) => b.sold - a.sold);
@@ -352,14 +379,17 @@ export function computeByMonth(records) {
     const mo = r[FIELD.mo];
     let m = map.get(mo);
     if (!m) {
-      m = { mo, listings: 0, sold: 0, gmv: 0, bids: 0 };
+      m = { mo, listings: 0, sold: 0, priced: 0, gmv: 0, bids: 0 };
       map.set(mo, m);
     }
     m.listings++;
     m.bids += r[FIELD.b];
     if (r[FIELD.s] === 1) {
       m.sold++;
-      m.gmv += r[FIELD.p];
+      if (hasPrice(r)) {
+        m.priced++;
+        m.gmv += r[FIELD.p];
+      }
     }
   }
   const arr = [...map.values()].sort((a, b) => a.mo - b.mo);
@@ -367,7 +397,7 @@ export function computeByMonth(records) {
     ...m,
     month: monthLabel(m.mo),
     str: m.listings > 0 ? (m.sold / m.listings) * 100 : 0,
-    avgPrice: m.sold > 0 ? m.gmv / m.sold : 0,
+    avgPrice: m.priced > 0 ? m.gmv / m.priced : 0,
     avgBids: m.listings > 0 ? m.bids / m.listings : 0,
   }));
 }
@@ -382,14 +412,17 @@ export function computeByWeek(records) {
     const wo = Math.floor(r[FIELD.dy] / 7); // week offset from epoch
     let w = map.get(wo);
     if (!w) {
-      w = { wo, listings: 0, sold: 0, gmv: 0, bids: 0 };
+      w = { wo, listings: 0, sold: 0, priced: 0, gmv: 0, bids: 0 };
       map.set(wo, w);
     }
     w.listings++;
     w.bids += r[FIELD.b];
     if (r[FIELD.s] === 1) {
       w.sold++;
-      w.gmv += r[FIELD.p];
+      if (hasPrice(r)) {
+        w.priced++;
+        w.gmv += r[FIELD.p];
+      }
     }
   }
   return [...map.values()]
@@ -399,7 +432,7 @@ export function computeByWeek(records) {
       // Use "month" as the label key so TrendsTab XAxis / tooltips work unchanged
       month: weekLabel(w.wo),
       str: w.listings > 0 ? (w.sold / w.listings) * 100 : 0,
-      avgPrice: w.sold > 0 ? w.gmv / w.sold : 0,
+      avgPrice: w.priced > 0 ? w.gmv / w.priced : 0,
       avgBids: w.listings > 0 ? w.bids / w.listings : 0,
     }));
 }
@@ -414,14 +447,17 @@ export function computeByDay(records) {
     const dy = r[FIELD.dy];
     let d = map.get(dy);
     if (!d) {
-      d = { dy, listings: 0, sold: 0, gmv: 0, bids: 0 };
+      d = { dy, listings: 0, sold: 0, priced: 0, gmv: 0, bids: 0 };
       map.set(dy, d);
     }
     d.listings++;
     d.bids += r[FIELD.b];
     if (r[FIELD.s] === 1) {
       d.sold++;
-      d.gmv += r[FIELD.p];
+      if (hasPrice(r)) {
+        d.priced++;
+        d.gmv += r[FIELD.p];
+      }
     }
   }
   return [...map.values()]
@@ -430,7 +466,7 @@ export function computeByDay(records) {
       ...d,
       month: dayLabel(d.dy),
       str: d.listings > 0 ? (d.sold / d.listings) * 100 : 0,
-      avgPrice: d.sold > 0 ? d.gmv / d.sold : 0,
+      avgPrice: d.priced > 0 ? d.gmv / d.priced : 0,
       avgBids: d.listings > 0 ? d.bids / d.listings : 0,
     }));
 }
@@ -460,7 +496,7 @@ export function computeByMonthSplit(universeRecords, soldRecords) {
   // Build the sold-side map: GMV from only the price-band-filtered sold records
   const sMap = new Map();
   for (const r of soldRecords) {
-    if (r[FIELD.s] !== 1) continue;
+    if (r[FIELD.s] !== 1 || !hasPrice(r)) continue;
     const mo = r[FIELD.mo];
     let m = sMap.get(mo);
     if (!m) {
@@ -492,7 +528,9 @@ export function computePriceDist(records) {
   // Price distribution shows sold listings only — that's its inherent definition
   const counts = PRICE_BANDS.map((b) => ({ ...b, count: 0 }));
   for (const r of records) {
-    if (r[FIELD.s] !== 1) continue;
+    // A sale with no captured price has no bucket. Before this guard it landed in
+    // <$5k, because the packed 0 satisfied that band's `min`.
+    if (r[FIELD.s] !== 1 || !hasPrice(r)) continue;
     const p = r[FIELD.p];
     for (const b of counts) {
       if (p >= b.min && p < b.max) {
@@ -597,8 +635,8 @@ export function groupScatterByMake(points) {
  * the reason this walks the records array rather than reusing applyAllFilters(),
  * which returns records stripped of their position.
  *
- * Zero-price sold listings are excluded: they are a known data gap
- * (CarsAndBidsData-9q4) and would otherwise pile onto the axis floor.
+ * Sold listings with no captured price are excluded: they are a known scraper gap
+ * (CarsAndBidsData-35n) and would otherwise pile onto the axis floor.
  */
 export function computeModelSales(model, filters = null) {
   if (!model) return [];
@@ -772,7 +810,7 @@ export function computeBreakoutsByMake(records, threshold = 0.25, topN = 15) {
   // Step 1: compute median sale price per make from ALL sold records
   const makeGroups = new Map();
   for (const r of records) {
-    if (r[FIELD.s] !== 1) continue;
+    if (r[FIELD.s] !== 1 || !hasPrice(r)) continue;
     const mk = DATA.makes[r[FIELD.mk]];
     let g = makeGroups.get(mk);
     if (!g) { g = { prices: [], bids: 0, count: 0 }; makeGroups.set(mk, g); }
@@ -798,7 +836,7 @@ export function computeBreakoutsByMake(records, threshold = 0.25, topN = 15) {
   // Step 2: count breakout listings per make
   const breakouts = new Map();
   for (const r of records) {
-    if (r[FIELD.s] !== 1) continue;
+    if (r[FIELD.s] !== 1 || !hasPrice(r)) continue;
     const mk = DATA.makes[r[FIELD.mk]];
     const stats = makeStats.get(mk);
     if (!stats) continue;
@@ -881,7 +919,7 @@ export function computeSTRByYear(records) {
  */
 export function computeSTRHeadlineStats(records) {
   let rListed = 0, rSold = 0, nrListed = 0, nrSold = 0;
-  let totalSold = 0, totalGMV = 0;
+  let totalSold = 0, totalPriced = 0, totalGMV = 0;
   // Track bid counts to show failed reserve auctions were not "unwanted"
   let rFailedBids = 0, rSoldBids = 0;
   for (const r of records) {
@@ -897,9 +935,14 @@ export function computeSTRHeadlineStats(records) {
         rFailedBids += r[FIELD.b];
       }
     }
-    if (r[FIELD.s] === 1) { totalSold++; totalGMV += r[FIELD.p]; }
+    if (r[FIELD.s] === 1) {
+      totalSold++;
+      if (hasPrice(r)) { totalPriced++; totalGMV += r[FIELD.p]; }
+    }
   }
-  const avgSalePrice = totalSold > 0 ? totalGMV / totalSold : 0;
+  // estimatedLostGMV multiplies this out, so averaging over priced sales matters:
+  // the old denominator quietly deflated every lost-GMV figure on the page.
+  const avgSalePrice = totalPriced > 0 ? totalGMV / totalPriced : 0;
   const rFailed = rListed - rSold;
   const totalListings = rListed + nrListed;
   return {
@@ -930,11 +973,14 @@ export function computeReserveFailByMake(records, topN = 15) {
     const mk = DATA.makes[r[FIELD.mk]];
     let entry = map.get(mk);
     if (!entry) {
-      entry = { make: mk, listed: 0, sold: 0, gmv: 0, models: new Map() };
+      entry = { make: mk, listed: 0, sold: 0, priced: 0, gmv: 0, models: new Map() };
       map.set(mk, entry);
     }
     entry.listed++;
-    if (r[FIELD.s] === 1) { entry.sold++; entry.gmv += r[FIELD.p]; }
+    if (r[FIELD.s] === 1) {
+      entry.sold++;
+      if (hasPrice(r)) { entry.priced++; entry.gmv += r[FIELD.p]; }
+    }
 
     // Track model-level breakdown so we can show the top 3 failing models per make
     const model = r[FIELD.md] || "Unknown";
@@ -961,7 +1007,7 @@ export function computeReserveFailByMake(records, topN = 15) {
         failCount:    m.listed - m.sold,
         listed:       m.listed,
         failRate:     m.listed > 0 ? ((m.listed - m.sold) / m.listed) * 100 : 0,
-        avgSalePrice: m.sold > 0 ? m.gmv / m.sold : 0,
+        avgSalePrice: m.priced > 0 ? m.gmv / m.priced : 0,
         topModels,
       };
     })
@@ -979,10 +1025,13 @@ export function computeBubbleData(records, topN = 40) {
   for (const r of records) {
     const mk = DATA.makes[r[FIELD.mk]];
     let m = map.get(mk);
-    if (!m) { m = { make: mk, bids: 0, gmv: 0, sold: 0, listings: 0 }; map.set(mk, m); }
+    if (!m) { m = { make: mk, bids: 0, gmv: 0, sold: 0, priced: 0, listings: 0 }; map.set(mk, m); }
     m.listings++;
     m.bids += r[FIELD.b];
-    if (r[FIELD.s] === 1) { m.sold++; m.gmv += r[FIELD.p]; }
+    if (r[FIELD.s] === 1) {
+      m.sold++;
+      if (hasPrice(r)) { m.priced++; m.gmv += r[FIELD.p]; }
+    }
   }
 
   return [...map.values()]
@@ -992,7 +1041,7 @@ export function computeBubbleData(records, topN = 40) {
     .map((m) => ({
       make:     m.make,
       avgBids:  m.bids / m.listings,
-      avgPrice: m.sold > 0 ? m.gmv / m.sold : 0,
+      avgPrice: m.priced > 0 ? m.gmv / m.priced : 0,
       listings: m.listings,
       str:      (m.sold / m.listings) * 100,
     }));
@@ -1063,7 +1112,7 @@ export function findPatternExamples(records, patternId) {
       // Index the highest-bid sold example per make+model (needs a real sale price)
       const soldByModel = new Map();
       for (const r of records) {
-        if (r[FIELD.s] !== 1 || !PATTERN_A_MAKES.has(DATA.makes[r[FIELD.mk]]) || r[FIELD.p] === 0) continue;
+        if (r[FIELD.s] !== 1 || !PATTERN_A_MAKES.has(DATA.makes[r[FIELD.mk]]) || !hasPrice(r)) continue;
         const k = `${DATA.makes[r[FIELD.mk]]}|${r[FIELD.md]}`;
         if (!soldByModel.has(k) || r[FIELD.b] > soldByModel.get(k)[FIELD.b]) soldByModel.set(k, r);
       }
@@ -1101,7 +1150,7 @@ export function findPatternExamples(records, patternId) {
       // Index the highest-bid sold example per make+model
       const soldByModel = new Map();
       for (const r of records) {
-        if (r[FIELD.s] !== 1 || r[FIELD.p] === 0) continue;
+        if (r[FIELD.s] !== 1 || !hasPrice(r)) continue;
         const k = `${DATA.makes[r[FIELD.mk]]}|${r[FIELD.md]}`;
         if (!soldByModel.has(k) || r[FIELD.b] > soldByModel.get(k)[FIELD.b]) soldByModel.set(k, r);
       }

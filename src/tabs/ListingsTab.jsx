@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Card, Pill } from "../components/Primitives.jsx";
 import { useFilters } from "../components/FilterContext.jsx";
-import { applyAllFilters, FIELD, getMakes } from "../data.js";
+import { applyAllFilters, FIELD, getMakes, hasPrice } from "../data.js";
 import {
   CARD_BG,
   GRAY_100,
@@ -92,7 +92,7 @@ export function ListingsTab() {
     );
   };
 
-  const visGMV = rows.reduce((s, r) => s + r[FIELD.p], 0);
+  const visGMV = rows.reduce((s, r) => (hasPrice(r) ? s + r[FIELD.p] : s), 0);
   const avgBidsVis = rows.length
     ? rows.reduce((s, r) => s + r[FIELD.b], 0) / rows.length
     : 0;
@@ -250,7 +250,7 @@ export function ListingsTab() {
                     className="px-3 py-2.5 text-[13px] font-bold tabular-nums text-right"
                     style={{ color: INK }}
                   >
-                    {fmtFull(r[FIELD.p])}
+                    {hasPrice(r) ? fmtFull(r[FIELD.p]) : "—"}
                   </td>
                   <td
                     className="px-3 py-2.5 text-[12px] tabular-nums text-right"
