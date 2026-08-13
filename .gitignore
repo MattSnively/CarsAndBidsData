@@ -18,6 +18,11 @@ weekly_update.*
 biweekly_update.*
 carsandbids_7day.*
 
+# Backfill working files: the checkpoint is a resumable scratch log and the
+# .bak is the pre-apply snapshot of the master CSV. Both are large and derived.
+data/backfill_checkpoint.jsonl
+data/carsandbids_master.csv.bak
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
