@@ -37,6 +37,72 @@ export const MAKE_COLORS = [
   "#8b5cf6", "#06b6d4", "#f97316", "#ec4899",
 ];
 
+// Mileage ramp for the Model page scatter — a sequential (magnitude) encoding,
+// so one hue with monotone lightness rather than distinct hues. The steps live in
+// index.css so the light/dark ramps swap with the theme like every other color.
+export const MILEAGE_RAMP = [
+  "var(--mileage-1)",
+  "var(--mileage-2)",
+  "var(--mileage-3)",
+  "var(--mileage-4)",
+  "var(--mileage-5)",
+];
+
+// Mark for listings whose mileage wasn't recorded — deliberately outside the ramp
+// so "unknown" never reads as a mileage value.
+export const MILEAGE_UNKNOWN_COLOR = "var(--gray-400)";
+
+const fmtMiles = (n) =>
+  n >= 1000 ? `${Math.round(n / 1000).toLocaleString()}k` : String(Math.round(n));
+
+/**
+ * Builds the mileage scale from the mileages actually on screen, cutting at
+ * quintiles rather than at fixed odometer thresholds.
+ *
+ * Absolute bands collapse on a single-model page: 59% of Land Cruisers are over
+ * 150k and 43% of Mustangs are under 25k, so most of a model's points would share
+ * one color and the encoding would say nothing. Quintiles spread the same model's
+ * cars across the whole ramp instead.
+ *
+ * The trade-off is that colors mean different mileages for different models, so
+ * the returned labels carry the real boundary values and the legend shows them.
+ *
+ * Returns null when there aren't enough distinct values to cut meaningfully —
+ * callers should fall back to a single neutral mark.
+ */
+export function buildMileageScale(mileages) {
+  const known = mileages.filter((m) => m > 0).sort((a, b) => a - b);
+  if (known.length < MILEAGE_RAMP.length) return null;
+
+  // Quintile cuts, de-duplicated: a model whose mileages bunch onto one value
+  // yields fewer usable bands rather than several with identical bounds.
+  const cuts = [];
+  for (let i = 1; i < MILEAGE_RAMP.length; i++) {
+    const v = known[Math.floor((known.length * i) / MILEAGE_RAMP.length)];
+    if (!cuts.includes(v)) cuts.push(v);
+  }
+  if (cuts.length === 0) return null;
+
+  const bands = cuts.map((cut, i) => ({
+    max: cut,
+    color: MILEAGE_RAMP[i],
+    label: i === 0 ? `<${fmtMiles(cut)}` : `${fmtMiles(cuts[i - 1])}–${fmtMiles(cut)}`,
+  }));
+  bands.push({
+    max: Infinity,
+    color: MILEAGE_RAMP[cuts.length],
+    label: `${fmtMiles(cuts[cuts.length - 1])}+`,
+  });
+
+  return {
+    bands,
+    colorFor: (mi) =>
+      !mi || mi <= 0
+        ? MILEAGE_UNKNOWN_COLOR
+        : bands.find((b) => mi < b.max).color,
+  };
+}
+
 // Price bands — the canonical bucketing used everywhere
 export const PRICE_BANDS = [
   { id: "<5k", label: "<$5k", min: 0, max: 5000 },
@@ -119,6 +185,23 @@ const EPOCH_MS = Date.UTC(2021, 7, 1); // month is 0-indexed
 export const dayLabel = (offset) => {
   const d = new Date(EPOCH_MS + offset * 86_400_000);
   return `${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCDate()}`;
+};
+
+/**
+ * Day offset → "Jan '24". Year-bearing companion to dayLabel(), for axes that
+ * span multiple years where a bare "Jan 15" is ambiguous. Kept separate rather
+ * than changing dayLabel(), which the Trends tab relies on for single-month
+ * windows where the year is already established by the surrounding context.
+ */
+export const dayLabelYear = (offset) => {
+  const d = new Date(EPOCH_MS + offset * 86_400_000);
+  return `${MONTH_NAMES[d.getUTCMonth()]} '${String(d.getUTCFullYear()).slice(2)}`;
+};
+
+/** Day offset → "Jan 15, 2024" — the unabbreviated form, for tooltips. */
+export const dayLabelFull = (offset) => {
+  const d = new Date(EPOCH_MS + offset * 86_400_000);
+  return `${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
 };
 
 /** Week offset (floor(dayOffset/7)) → "Jan 13" (first day of that week) */

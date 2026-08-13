@@ -24,6 +24,16 @@
   --gray-100: #f2f2f2;
   --gray-50: #f8f8f7;
   --red: #d94444;
+
+  /* Sequential ramp for mileage on the Model page scatter. One hue, monotone
+     lightness, low mileage -> high. Blue rather than the brand lime, which
+     already means "selected" elsewhere. Every step clears 3:1 on this surface
+     (3.04 at the light end) so no mark disappears. */
+  --mileage-1: #4d94f8;
+  --mileage-2: #3b82f6;
+  --mileage-3: #2563eb;
+  --mileage-4: #1d4ed8;
+  --mileage-5: #1a3a94;
 }
 
 [data-theme="dark"] {
@@ -43,6 +53,15 @@
   --gray-100: #1e1e1e;
   --gray-50: #161616;
   --red: #e05757;
+
+  /* The ramp's anchor flips in dark mode: darkening into the surface would make
+     high-mileage marks vanish, so the ramp brightens instead. Direction is never
+     inferred from color — the legend labels both ends. Min contrast 4.73. */
+  --mileage-1: #3b82f6;
+  --mileage-2: #60a5fa;
+  --mileage-3: #93c5fd;
+  --mileage-4: #bfdbfe;
+  --mileage-5: #dbeafe;
 }
 
 /* Used in ActiveFilterBar for the pill remove button hover —

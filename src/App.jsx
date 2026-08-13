@@ -8,6 +8,7 @@ import { applyUniverseFilters, getMeta, loadData } from "./data.js";
 import { CompareTab } from "./tabs/CompareTab.jsx";
 import { InsightsTab } from "./tabs/InsightsTab.jsx";
 import { ListingsTab } from "./tabs/ListingsTab.jsx";
+import { ModelTab } from "./tabs/ModelTab.jsx";
 import { OverviewTab } from "./tabs/OverviewTab.jsx";
 import { TrendsTab } from "./tabs/TrendsTab.jsx";
 import { BG, GRAY_200, GRAY_500, INK, INK_SURFACE, LIME } from "./tokens.js";
@@ -103,6 +104,7 @@ function Shell({ isDark, toggleDark }) {
             <TrendsTab drillMetric={drillMetric} setDrillMetric={setDrillMetric} />
           )}
           {tab === "Listings" && <ListingsTab />}
+          {tab === "Model" && <ModelTab />}
           {tab === "Compare" && <CompareTab />}
           {tab === "Insights" && <InsightsTab />}
         </main>

@@ -30,7 +30,7 @@ function SunIcon() {
 }
 
 export function Header({ tab, setTab, filteredCount, totalCount, isDark, toggleDark }) {
-  const tabs = ["Overview", "Trends", "Listings", "Compare", "Insights"];
+  const tabs = ["Overview", "Trends", "Listings", "Model", "Compare", "Insights"];
   const isFiltered = filteredCount !== totalCount;
 
   return (

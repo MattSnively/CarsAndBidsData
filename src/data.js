@@ -586,6 +586,64 @@ export function groupScatterByMake(points) {
 }
 
 /* ============================================================
+   MODEL PAGE COMPUTATIONS
+   ============================================================ */
+
+/**
+ * Sold auctions for one model as scatter points of sale date against sale price.
+ *
+ * Carries each point's index in DATA.records so the tooltip can pull the listing's
+ * url and color from the detail sidecar, which is addressed by that same index —
+ * the reason this walks the records array rather than reusing applyAllFilters(),
+ * which returns records stripped of their position.
+ *
+ * Zero-price sold listings are excluded: they are a known data gap
+ * (CarsAndBidsData-9q4) and would otherwise pile onto the axis floor.
+ */
+export function computeModelSales(model, filters = null) {
+  if (!model) return [];
+  const lookups = filters ? buildUniverseLookups(filters) : null;
+  const points = [];
+  for (let i = 0; i < DATA.records.length; i++) {
+    const r = DATA.records[i];
+    if (r[FIELD.md] !== model) continue;
+    if (r[FIELD.s] !== 1) continue;
+    if (r[FIELD.p] <= 0) continue;
+    // Honour the other active filters so the page agrees with the global state,
+    // minus the model clause the caller is already selecting on.
+    if (lookups && !passesUniverse(r, filters, { ...lookups, models: null })) {
+      continue;
+    }
+    points.push({
+      index: i,
+      day: r[FIELD.dy],
+      price: r[FIELD.p],
+      mileage: r[FIELD.mi],
+      year: r[FIELD.yr],
+      make: DATA.makes[r[FIELD.mk]],
+      model: r[FIELD.md],
+      bids: r[FIELD.b],
+      views: r[FIELD.v],
+      comments: r[FIELD.cm],
+      colorGroup: DATA.colors?.[r[FIELD.cl]] ?? null,
+      transmission: r[FIELD.tx] || null,
+      noReserve: r[FIELD.nr] === 1,
+      bodyStyle: DATA.bodies?.[r[FIELD.bs]] ?? null,
+    });
+  }
+  return points;
+}
+
+/** Records for one model, for the model-scoped versions of the shared aggregates. */
+export function applyModelFilters(model, filters) {
+  const lookups = buildUniverseLookups(filters);
+  const modelOnly = { ...lookups, models: null };
+  return DATA.records.filter(
+    (r) => r[FIELD.md] === model && passesUniverse(r, filters, modelOnly),
+  );
+}
+
+/* ============================================================
    INSIGHTS TAB COMPUTATIONS
    ============================================================ */
 
