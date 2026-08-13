@@ -42,6 +42,15 @@ WINDOW_START = pd.Timestamp("2026-03-02")
 # regex grabbed an unrelated figure. Chosen well under any real sale.
 IMPLAUSIBLE_PRICE = 2000
 
+# Pacing. A first run at 4 workers and a 1.5s delay returned empty pages for 91%
+# of requests — Cars & Bids throttles sustained volume, and the same URLs came
+# back 15/15 when retried serially at 3s. Concurrency is the sensitive dial, not
+# total request count, so keep the defaults gentle.
+RETRIES = 3
+RETRY_BACKOFF = 5.0     # seconds, multiplied by attempt number
+COOLDOWN_AFTER = 5      # consecutive empty pages before standing down
+COOLDOWN_SECONDS = 120
+
 # Only these move. A partial scrape must not be able to blank out fields that
 # were captured correctly, so everything else in the row is left untouched.
 BACKFILL_FIELDS = [
@@ -63,15 +72,24 @@ def select_targets(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_done() -> set:
+    """
+    URLs that already produced a usable result.
+
+    Only successful rows count. A failed row must stay in the queue — a page
+    that returned nothing was almost always rate limiting rather than a dead
+    listing, and treating those as finished would silently abandon them.
+    """
     if not CHECKPOINT.exists():
         return set()
     done = set()
     with open(CHECKPOINT, encoding="utf-8") as f:
         for line in f:
             try:
-                done.add(json.loads(line)["url"])
-            except (json.JSONDecodeError, KeyError):
+                record = json.loads(line)
+            except json.JSONDecodeError:
                 continue  # a torn final line from an interrupted run
+            if record.get("ok") and "url" in record:
+                done.add(record["url"])
     return done
 
 
@@ -79,6 +97,7 @@ async def worker(name: int, queue: asyncio.Queue, out, counters: dict, delay: fl
     """One browser, pulling URLs until the queue drains."""
     scraper = CarsAndBidsScraper(headless=True, delay=delay)
     await scraper.start()
+    misses = 0  # consecutive empty pages, used to back off
     try:
         while True:
             try:
@@ -86,16 +105,32 @@ async def worker(name: int, queue: asyncio.Queue, out, counters: dict, delay: fl
             except asyncio.QueueEmpty:
                 return
             try:
-                details = await scraper.scrape_detail_page(url)
+                details = {}
+                # An empty page means throttling far more often than a dead
+                # listing, so retry the same URL before giving up on it.
+                for attempt in range(RETRIES):
+                    details = await scraper.scrape_detail_page(url)
+                    if details.get("auction_status"):
+                        break
+                    await asyncio.sleep(RETRY_BACKOFF * (attempt + 1))
+
                 record = {"url": url, "scraped_at": datetime.now().isoformat(timespec="seconds")}
                 for field in BACKFILL_FIELDS:
                     if field in details:
                         record[field] = details[field]
-                # No status means the page did not render a result we recognise.
-                # Keep the row so a re-run does not retry it forever, but mark it
-                # so --apply skips it rather than blanking good data.
                 record["ok"] = bool(details.get("auction_status"))
                 counters["ok" if record["ok"] else "no_status"] += 1
+
+                if record["ok"]:
+                    misses = 0
+                else:
+                    misses += 1
+                    # A run of empties means the site is refusing us, and hammering
+                    # it harder only deepens the block. Stand down for a while.
+                    if misses % COOLDOWN_AFTER == 0:
+                        print(f"  [worker {name}] {misses} empty in a row — "
+                              f"pausing {COOLDOWN_SECONDS}s", flush=True)
+                        await asyncio.sleep(COOLDOWN_SECONDS)
             except Exception as e:                      # noqa: BLE001 - log and continue
                 record = {"url": url, "ok": False, "error": f"{type(e).__name__}: {e}"[:200]}
                 counters["error"] += 1
@@ -210,8 +245,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--limit", type=int, help="scrape at most N pages (validation sample)")
-    p.add_argument("--workers", type=int, default=4, help="parallel browsers (default 4)")
-    p.add_argument("--delay", type=float, default=1.5, help="per-page delay seconds (default 1.5)")
+    p.add_argument("--workers", type=int, default=2, help="parallel browsers (default 2)")
+    p.add_argument("--delay", type=float, default=3.0, help="per-page delay seconds (default 3.0)")
     p.add_argument("--apply", action="store_true", help="write checkpoint results into the master CSV")
     args = p.parse_args()
 
