@@ -45,6 +45,36 @@ BODY_STYLES = {
 BASE_URL = "https://carsandbids.com/past-auctions/"
 
 
+# Result phrases Cars & Bids renders in li.ended, mapped to the auction_status
+# vocabulary the master CSV already uses. Order matters: "Sold After for" has to
+# be tested before "Sold for", because both contain "Sold".
+OUTCOME_PHRASES = [
+    ('Sold After', 'sold_after'),
+    ('Sold for', 'sold'),
+    ('Auction Canceled', 'canceled'),
+    ('Bid to', 'no_sale'),
+]
+
+# Statuses that represent a completed sale, whatever route it took.
+SOLD_STATUSES = frozenset({'sold', 'sold_after'})
+
+
+def classify_outcome(outcome_text: str) -> Optional[str]:
+    """
+    Map the bid bar's result phrase to an auction_status value.
+
+    Returns None on an unrecognised phrase so the row is left visibly incomplete
+    rather than being guessed into the wrong bucket — a wrong status is worse
+    than a missing one, because it silently distorts sell-through.
+    """
+    if not outcome_text:
+        return None
+    for phrase, status in OUTCOME_PHRASES:
+        if phrase in outcome_text:
+            return status
+    return None
+
+
 def parse_price(price_text: str) -> Optional[int]:
     """Extract numeric price from text like '$41,250' or 'Bid to $18,500'."""
     if not price_text:
@@ -361,6 +391,17 @@ class CarsAndBidsScraper:
             except Exception:
                 pass
 
+            # Comments sit in the same list as bids and carry the dashboard's
+            # engagement signal. Never captured, so every listing added since the
+            # incremental pipeline took over has a blank num_comments.
+            try:
+                comments_el = await self.page.query_selector('li.num-comments span.value')
+                if comments_el:
+                    comments_text = await comments_el.inner_text()
+                    details['num_comments'] = int(comments_text.replace(',', ''))
+            except Exception:
+                pass
+
             # Also check the stats section for views/watchers
             stats_items = await self.page.query_selector_all('ul.stats li, ul.bid-stats li')
             for item in stats_items:
@@ -395,19 +436,40 @@ class CarsAndBidsScraper:
                 )
             details['is_no_reserve'] = no_reserve_badge is not None
 
-            # Get sold price from the page
-            sold_section = await self.page.query_selector_all('h4')
-            for section in sold_section:
-                text = await section.inner_text()
-                if 'Sold' in text:
-                    details['sold'] = True
-                    # Try to find the price nearby
-                    parent = await section.query_selector('xpath=..')
-                    if parent:
-                        parent_text = await parent.inner_text()
-                        price = parse_price(parent_text)
-                        if price:
-                            details['sale_price'] = price
+            # Auction outcome and its price, read from the bid bar.
+            #
+            # The result lives in a labelled element: li.ended holds the phrase
+            # ("Sold for", "Sold After for", "Bid to", "Auction Canceled") and,
+            # when there is a figure, span.bid-value holds it on its own.
+            #
+            # The previous approach scanned every h4 for the word "Sold" and
+            # regexed the first dollar amount out of its parent's inner text,
+            # letting the last match win. That picked up unrelated figures from
+            # nearby prose — a $75,000 sale was recorded as $80 — and had no
+            # concept of a canceled auction, so cancellations became sales.
+            outcome_el = await self.page.query_selector('ul.bid-stats li.ended span.value')
+            if outcome_el:
+                status = classify_outcome(await outcome_el.inner_text())
+                if status:
+                    price_el = await outcome_el.query_selector('span.bid-value')
+                    price = parse_price(await price_el.inner_text()) if price_el else None
+                    details['auction_status'] = status
+                    details['sold'] = status in SOLD_STATUSES
+                    # Assign both money fields on every branch. The listing-card
+                    # pass writes a "Bid to" figure into sale_price, so leaving a
+                    # key untouched here would let that leak through and make an
+                    # unsold auction look like a sale.
+                    details['sale_price'] = price if details['sold'] else None
+                    if status == 'sold':
+                        # A live sale clears at the winning bid, so they are the
+                        # same number. "Sold After" is negotiated afterwards, so
+                        # its live high bid is a different figure the page does
+                        # not show — leave high_bid empty rather than guess.
+                        details['high_bid'] = price
+                    elif status == 'no_sale':
+                        details['high_bid'] = price
+                    else:
+                        details['high_bid'] = None
 
             # Get modifications section
             mods_section = await self.page.query_selector('h4:has-text("Modifications")')
@@ -556,10 +618,11 @@ class CarsAndBidsScraper:
 
         # Define column order
         columns = [
-            'year', 'make', 'model', 'full_title', 'mileage', 'sale_price', 'sold',
+            'year', 'make', 'model', 'full_title', 'mileage', 'sale_price', 'high_bid',
+            'sold', 'auction_status',
             'transmission', 'drivetrain', 'engine', 'body_style',
             'exterior_color', 'interior_color', 'title_status', 'location',
-            'num_bids', 'num_views', 'num_watchers', 'is_no_reserve',
+            'num_bids', 'num_views', 'num_comments', 'num_watchers', 'is_no_reserve',
             'modifications', 'known_flaws', 'end_date', 'url', 'image_url'
         ]
 
