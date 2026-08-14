@@ -22,6 +22,7 @@ carsandbids_7day.*
 # .bak is the pre-apply snapshot of the master CSV. Both are large and derived.
 data/backfill_checkpoint.jsonl
 data/carsandbids_master.csv.bak
+data/carsandbids_master.csv.premigrate
 
 # Beads / Dolt files (added by bd init)
 .dolt/

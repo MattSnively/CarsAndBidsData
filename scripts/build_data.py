@@ -194,6 +194,60 @@ def safe_str(value, default: str = "", max_len: int | None = None) -> str:
     return s
 
 
+def check_invariants(df: pd.DataFrame) -> None:
+    """
+    Warn about source data that contradicts itself.
+
+    Every bug in this pipeline's history was silent: missing prices packed as
+    $0, bool(nan) turning blank rows into sales, "Bid to" figures landing in
+    sale_price, five months of blank auction_status. None raised anything — the
+    build reported success each time. These checks are cheap and run on every
+    build so the next one announces itself instead of surfacing months later in
+    a chart nobody can explain.
+
+    Deliberately warnings, not failures: a data anomaly should not block a
+    deploy, it should be visible in the log and in CI output.
+    """
+    price = pd.to_numeric(df["sale_price"], errors="coerce")
+    status = df["auction_status"].fillna("")
+    is_sale = status.isin(SALE_OUTCOMES | {"sold_after"})
+
+    problems = []
+
+    n = int((~is_sale & price.notna()).sum())
+    if n:
+        problems.append(f"{n:,} non-sale rows carry a sale_price "
+                        f"(a high bid misrouted into the sale column?)")
+
+    n = int((status == "canceled").sum() and ((status == "canceled") & price.notna()).sum())
+    if n:
+        problems.append(f"{n:,} canceled rows carry a sale_price")
+
+    n = int(status.eq("").sum())
+    if n:
+        # ASCII only: this line goes to the Windows console and to CI logs,
+        # neither of which reliably renders an em dash.
+        problems.append(f"{n:,} rows have no auction_status "
+                        f"(scraper/merge schema drift, see CarsAndBidsData-9x6)")
+
+    n = int((is_sale & price.isna()).sum())
+    if n:
+        pct = n / max(int(is_sale.sum()), 1) * 100
+        problems.append(f"{n:,} sold rows have no sale_price ({pct:.1f}% of sales)")
+
+    n = int((is_sale & (price > 0) & (price < 2000)).sum())
+    if n:
+        problems.append(f"{n:,} sales priced under $2,000 (possible parse errors)")
+
+    if problems:
+        print("\n  DATA WARNINGS:")
+        for p in problems:
+            print(f"    ! {p}")
+        print()
+    else:
+        print("  data invariants: all clear")
+
+
 def build(csv_path: Path, output_path: Path) -> None:
     # Read the master CSV. CSV is the canonical on-disk format for the
     # source data; the dashboard only consumes the packed JSON written below.
@@ -214,6 +268,8 @@ def build(csv_path: Path, output_path: Path) -> None:
     body_ix = {b: i for i, b in enumerate(bodies)}
     color_ix = {c: i for i, c in enumerate(colors)}
     print(f"  {len(makes)} unique makes, {len(bodies)} unique body styles, {len(colors)} color groups")
+
+    check_invariants(df)
 
     # Build the sidecar's dictionaries up front so the row loop can just index
     # into them. Sorted for determinism — the index must not shift between runs.
