@@ -25,6 +25,7 @@ export const FIELD = {
   cl: 13, // color group index into DATA.colors
   cm: 14, // num_comments (engagement signal)
   oc: 15, // outcome index into DATA.outcomes — see OUTCOME below
+  hb: 16, // high_bid — top bid reached, -1 when never captured
 };
 
 /**
@@ -79,6 +80,18 @@ export function countsInRate(rec) {
  */
 export function hasPrice(rec) {
   return rec[FIELD.p] >= 0;
+}
+
+/**
+ * True when the record carries a captured high bid.
+ *
+ * On an unsold listing the high bid is what the market actually offered, which
+ * is the only direct measure of what a failed reserve cost. Coverage is partial
+ * — the old scraper never stored it separately — so anything built on it has to
+ * say how much of the population it actually saw.
+ */
+export function hasHighBid(rec) {
+  return rec[FIELD.hb] >= 0;
 }
 
 // Module-level data, populated by loadData()
@@ -993,14 +1006,24 @@ export function computeSTRByYear(records) {
 
 /**
  * All-time headline stats for the reserve problem analysis.
- * estimatedLostGMV is a rough estimate: failed reserve count × avg sale price
- * across all sold listings (high_bid for unsold listings is not in the dataset).
+ *
+ * lostGMV is what failed-reserve auctions were actually bid to. Where the high
+ * bid was captured it is summed directly; the remainder is filled in at the
+ * mean of the bids we do have, and `lostGMVCoverage` reports how much of the
+ * total is measured rather than inferred.
+ *
+ * This replaces an estimate of failedCount × average sale price, which was
+ * both unnecessary — high bids are in the dataset now — and biased low. Cars
+ * carrying a reserve that fails are dearer than cars that sell, so the average
+ * sale price was the wrong yardstick for them.
  */
 export function computeSTRHeadlineStats(records) {
   let rListed = 0, rSold = 0, nrListed = 0, nrSold = 0;
   let totalSold = 0, totalPriced = 0, totalGMV = 0;
   // Track bid counts to show failed reserve auctions were not "unwanted"
   let rFailedBids = 0, rSoldBids = 0;
+  // Failed-reserve high bids: what the market actually offered and did not get.
+  let lostMeasured = 0, lostMeasuredCount = 0;
   for (const r of records) {
     if (!countsInRate(r)) continue;
     if (r[FIELD.nr] === 1) {
@@ -1013,6 +1036,10 @@ export function computeSTRHeadlineStats(records) {
         rSoldBids += r[FIELD.b];
       } else {
         rFailedBids += r[FIELD.b];
+        if (hasHighBid(r)) {
+          lostMeasuredCount++;
+          lostMeasured += r[FIELD.hb];
+        }
       }
     }
     if (r[FIELD.s] === 1) {
@@ -1020,18 +1047,26 @@ export function computeSTRHeadlineStats(records) {
       if (hasPrice(r)) { totalPriced++; totalGMV += r[FIELD.p]; }
     }
   }
-  // estimatedLostGMV multiplies this out, so averaging over priced sales matters:
-  // the old denominator quietly deflated every lost-GMV figure on the page.
   const avgSalePrice = totalPriced > 0 ? totalGMV / totalPriced : 0;
   const rFailed = rListed - rSold;
   const totalListings = rListed + nrListed;
+  // Fill the gap at the mean of the bids actually observed in this same
+  // population, not at the average sale price of a different one.
+  const avgLostBid = lostMeasuredCount > 0 ? lostMeasured / lostMeasuredCount : 0;
+  const lostUnmeasured = (rFailed - lostMeasuredCount) * avgLostBid;
   return {
     reserveStr:         rListed  > 0 ? (rSold  / rListed)  * 100 : 0,
     noReserveStr:       nrListed > 0 ? (nrSold / nrListed) * 100 : 0,
     reserveListed:      rListed,
     reserveFailed:      rFailed,
     reserveFailPct:     rListed > 0 ? (rFailed / rListed) * 100 : 0,
-    estimatedLostGMV:   rFailed * avgSalePrice,
+    lostGMV:            lostMeasured + lostUnmeasured,
+    lostGMVMeasured:    lostMeasured,
+    lostGMVCoverage:    rFailed > 0 ? (lostMeasuredCount / rFailed) * 100 : 0,
+    avgLostBid,
+    // Kept under its old name so callers that have not moved across still work;
+    // it now carries the measured-plus-inferred figure rather than the estimate.
+    estimatedLostGMV:   lostMeasured + lostUnmeasured,
     avgSalePrice,
     totalListings,
     // reservePct is the "slice of the pie" KPI: what fraction of all listings use a reserve

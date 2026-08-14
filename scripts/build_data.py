@@ -8,10 +8,15 @@ Outputs:
 
 Format: { makes: [...], bodies: [...], colors: [...], records: [[...], ...], meta: {...} }
 
-Each record is a 16-element array:
+Each record is a 17-element array:
   [year, makeIdx, model, sale_price, mileage, num_bids, num_views,
    sold(0|1), no_reserve(0|1), bodyIdx, transmission("M"|"A"|""),
-   monthOffset, dayOffset, colorIdx, num_comments, outcomeIdx]
+   monthOffset, dayOffset, colorIdx, num_comments, outcomeIdx, high_bid]
+
+high_bid:    the top bid the auction reached, whatever its outcome, or
+             PRICE_UNKNOWN (-1) when it was never captured. On an unsold
+             listing this is what the market was willing to pay, which is the
+             only direct measure of what a failed reserve cost.
 
 outcomeIdx:  index into the `outcomes` lookup — the auction's result as one of
              five mutually exclusive states. See OUTCOMES below for what each
@@ -325,6 +330,7 @@ def build(csv_path: Path, output_path: Path) -> None:
             color_ix.get(group_color(r.get("exterior_color")), color_ix[COLOR_OTHER]),  # field 13 — color group
             safe_int(r.get("num_comments")),   # field 14 — comment count (engagement signal)
             OUTCOME_IX[outcome],               # field 15 — auction outcome
+            safe_int(r.get("high_bid"), PRICE_UNKNOWN),  # field 16 — top bid reached
         ]
         paired.append((record, detail))
 
@@ -356,7 +362,8 @@ def build(csv_path: Path, output_path: Path) -> None:
         "epoch": f"{EPOCH_YEAR}-{EPOCH_MONTH:02d}",
         # 4: sale_price uses PRICE_UNKNOWN (-1) for missing instead of 0
         # 5: field 15 carries the auction outcome; `sold` is derived from it
-        "schema_version": 5,
+        # 6: field 16 carries high_bid
+        "schema_version": 6,
         "field_index": {
             "year": 0,
             "make_ix": 1,
@@ -374,6 +381,7 @@ def build(csv_path: Path, output_path: Path) -> None:
             "color_ix": 13,
             "comments": 14,
             "outcome_ix": 15,
+            "high_bid": 16,
         },
         "price_unknown_sentinel": PRICE_UNKNOWN,
     }

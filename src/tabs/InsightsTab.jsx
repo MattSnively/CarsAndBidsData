@@ -283,7 +283,9 @@ export function InsightsTab() {
         <KpiCard
           label="Failed Reserve Auctions (all-time)"
           value={fmtN(headline.reserveFailed)}
-          sub={`Est. ${fmtK(Math.round(headline.estimatedLostGMV))} in unrealized GMV at avg sale price`}
+          // Says what the market actually bid, and how much of that is measured
+          // rather than inferred — the figure used to be an estimate throughout.
+          sub={`${fmtK(Math.round(headline.lostGMV))} bid but not sold · ${headline.lostGMVCoverage.toFixed(0)}% from recorded high bids`}
           accentColor={RED}
         />
         <KpiCard
