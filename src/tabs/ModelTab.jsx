@@ -1,12 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Area,
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
-  ComposedChart,
-  Line,
   ResponsiveContainer,
   Scatter,
   ScatterChart,
@@ -21,7 +18,6 @@ import { FilterMultiSelect } from "../components/FilterMultiSelect.jsx";
 import { useFilters } from "../components/FilterContext.jsx";
 import {
   applyModelFilters,
-  computeByMonthSplit,
   computeKPIs,
   computeModelSales,
   computePriceDist,
@@ -48,10 +44,6 @@ import {
   fmtFull,
   fmtK,
 } from "../tokens.js";
-
-// Below this many sales a monthly trend line reads as signal when it is noise,
-// so the trend card is replaced with a plain statement of the sales instead.
-const MIN_SALES_FOR_TREND = 8;
 
 // The tooltip body sits on INK_SURFACE in both themes, so its secondary text needs
 // a fixed light gray rather than a token that inverts with the theme.
@@ -233,7 +225,6 @@ export function ModelTab() {
   const kpis = useMemo(() => computeKPIs(records), [records]);
   const priceDist = useMemo(() => computePriceDist(records), [records]);
   const reserve = useMemo(() => computeReserveSplit(records), [records]);
-  const byMonth = useMemo(() => computeByMonthSplit(records, records), [records]);
   // Cut the ramp against this model's own mileages, not fixed odometer bands.
   const mileageScale = useMemo(
     () => buildMileageScale(points.map((p) => p.mileage)),
@@ -416,113 +407,6 @@ export function ModelTab() {
             Nothing to plot — try clearing other filters.
           </div>
         )}
-      </Card>
-
-      <Card className="mb-3">
-        <CardHeader
-          title="Sell-Through Rate vs. Total GMV"
-          sub={
-            kpis.totalSold >= MIN_SALES_FOR_TREND
-              ? `Monthly, for ${model}`
-              : "Too few sales to read as a trend"
-          }
-          right={
-            <div className="flex items-center gap-3 text-[11px]" style={{ color: GRAY_500 }}>
-              <div className="flex items-center gap-1.5">
-                <div style={{ width: 18, height: 2, background: LIME }} />
-                STR
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div style={{ width: 18, borderTop: `1.5px dashed ${INK}` }} />
-                GMV
-              </div>
-            </div>
-          }
-        />
-        <div className="px-3 pb-3 pt-1" style={{ height: 260 }}>
-          {/* A handful of sales drawn as a monthly line invents a trend that isn't
-              there, so below the threshold the numbers are stated plainly instead. */}
-          {kpis.totalSold < MIN_SALES_FOR_TREND ? (
-            <div
-              className="h-full flex flex-col items-center justify-center text-center px-6"
-              style={{ color: GRAY_500 }}
-            >
-              <div className="text-[12.5px] mb-1" style={{ color: INK }}>
-                {kpis.totalSold === 0
-                  ? "No sales for this model"
-                  : `${kpis.totalSold} sale${kpis.totalSold === 1 ? "" : "s"} across ${byMonth.length} month${byMonth.length === 1 ? "" : "s"}`}
-              </div>
-              <div className="text-[11.5px]">
-                A monthly trend needs at least {MIN_SALES_FOR_TREND} sales to mean
-                anything. The scatter above shows each one.
-              </div>
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={byMonth} margin={{ top: 10, right: 15, left: 0, bottom: 5 }}>
-                <defs>
-                  <linearGradient id="modelstrfill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={LIME} stopOpacity={0.35} />
-                    <stop offset="100%" stopColor={LIME} stopOpacity={0.04} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke={GRAY_100} vertical={false} />
-                <XAxis
-                  dataKey="month"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: GRAY_500, fontSize: 10 }}
-                  minTickGap={20}
-                />
-                <YAxis
-                  yAxisId="left"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: GRAY_500, fontSize: 10 }}
-                  domain={[0, 100]}
-                  tickFormatter={(v) => `${v}%`}
-                />
-                <YAxis
-                  yAxisId="right"
-                  orientation="right"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: GRAY_500, fontSize: 10 }}
-                  tickFormatter={fmtK}
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: INK_SURFACE,
-                    border: "none",
-                    borderRadius: 5,
-                    fontSize: 11,
-                  }}
-                  labelStyle={{ color: "white", fontWeight: 600 }}
-                  formatter={(v, name) =>
-                    name === "str" ? [`${v.toFixed(1)}%`, "STR"] : [fmtFull(v), "GMV"]
-                  }
-                />
-                <Area
-                  yAxisId="left"
-                  type="monotone"
-                  dataKey="str"
-                  stroke={LIME}
-                  strokeWidth={2}
-                  fill="url(#modelstrfill)"
-                />
-                <Line
-                  yAxisId="right"
-                  type="monotone"
-                  dataKey="gmv"
-                  stroke={INK}
-                  strokeWidth={1.5}
-                  strokeDasharray="4 3"
-                  dot={false}
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
-          )}
-        </div>
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
