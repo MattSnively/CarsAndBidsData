@@ -278,7 +278,12 @@ export function OverviewTab({ setTab, setDrillMetric }) {
       key: "str",
       label: "Sell-Through Rate",
       value: `${kpis.str.toFixed(1)}%`,
-      sub: "listings resulting in sale",
+      // Name the excluded listings rather than let the rate quietly disagree
+      // with the listing count beside it. A canceled auction never went to
+      // market, so counting it as a failure would understate the rate.
+      sub: kpis.canceled > 0
+        ? `listings resulting in sale · ${kpis.canceled} canceled excluded`
+        : "listings resulting in sale",
       drillTo: "Trends",
       drillMetric: "str",
     },

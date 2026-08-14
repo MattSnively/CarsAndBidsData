@@ -298,6 +298,12 @@ export function ModelTab() {
           <div className="text-[12px] mt-0.5" style={{ color: GRAY_500 }}>
             {kpis.totalSold.toLocaleString()} sold of{" "}
             {kpis.totalListed.toLocaleString()} listed
+            {kpis.canceled > 0 && (
+              <span title="Canceled auctions never went to market, so they are left out of the sell-through rate">
+                {" · "}
+                {kpis.canceled.toLocaleString()} canceled
+              </span>
+            )}
             {points.length !== kpis.totalSold && (
               <>
                 {" · "}
