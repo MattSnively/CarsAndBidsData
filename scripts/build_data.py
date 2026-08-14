@@ -8,10 +8,15 @@ Outputs:
 
 Format: { makes: [...], bodies: [...], colors: [...], records: [[...], ...], meta: {...} }
 
-Each record is a 15-element array:
+Each record is a 16-element array:
   [year, makeIdx, model, sale_price, mileage, num_bids, num_views,
    sold(0|1), no_reserve(0|1), bodyIdx, transmission("M"|"A"|""),
-   monthOffset, dayOffset, colorIdx, num_comments]
+   monthOffset, dayOffset, colorIdx, num_comments, outcomeIdx]
+
+outcomeIdx:  index into the `outcomes` lookup — the auction's result as one of
+             five mutually exclusive states. See OUTCOMES below for what each
+             means and how it should count. `sold` is derived from it rather
+             than read separately, so the two can never disagree.
 
 monthOffset: months since 2021-08 (the dataset start). Month 0 = Aug 2021.
 dayOffset:   days since 2021-08-01 (the dataset start). Day 0 = Aug 1, 2021.
@@ -58,6 +63,46 @@ EPOCH_DATE = date_type(2021, 8, 1)
 # Sentinel for "the source had no sale price". Must stay negative so the client's
 # hasPrice() check and the existing `p > 0` guards both exclude it.
 PRICE_UNKNOWN = -1
+
+# OUTCOMES — the five mutually exclusive states an auction can end in, and how
+# each counts toward sell-through:
+#
+#   sold             cleared live above reserve, or had none.
+#                    STR numerator and denominator.
+#   sold_after       reserve was not met live and a deal was struck afterwards.
+#                    A real sale, but not a live clear, so it is reported
+#                    separately rather than folded into the headline rate.
+#   reserve_not_met  ended unsold with bids below reserve. Denominator only.
+#                    Every unsold auction in the dataset is this — none have
+#                    zero bids — so there is no separate "no bids" state.
+#   canceled         pulled by the seller or by Cars & Bids. Excluded from the
+#                    numerator AND the denominator: it never got a fair test,
+#                    so counting it as a failure understates sell-through.
+#   unknown          the scrape could not determine a result. Excluded from
+#                    every rate, counted and surfaced rather than hidden.
+#
+# The index order is the wire format — append only, never reorder.
+OUTCOMES = ["sold", "sold_after", "reserve_not_met", "canceled", "unknown"]
+OUTCOME_IX = {name: i for i, name in enumerate(OUTCOMES)}
+
+# auction_status values as they appear in the master CSV, mapped to the taxonomy.
+STATUS_TO_OUTCOME = {
+    "sold": "sold",
+    "sold_after": "sold_after",
+    "no_sale": "reserve_not_met",
+    "canceled": "canceled",
+    "cancelled": "canceled",
+}
+
+# Outcomes that represent a completed sale, whatever route the sale took.
+SALE_OUTCOMES = {"sold", "sold_after"}
+
+
+def classify_row(status) -> str:
+    """Map a master-CSV auction_status to one of OUTCOMES."""
+    if pd.isna(status):
+        return "unknown"
+    return STATUS_TO_OUTCOME.get(str(status).strip().lower(), "unknown")
 
 # Color grouping: map exterior_color strings to one of 8 major color families.
 # Each tuple is (group_label, [substring_keywords]).  Order matters — first match wins.
@@ -201,6 +246,7 @@ def build(csv_path: Path, output_path: Path) -> None:
             url[len(URL_PREFIX):] if url.startswith(URL_PREFIX) else url,
             *(detail_ix(r, field) for field in DETAIL_DICT_FIELDS),
         ]
+        outcome = classify_row(r.get("auction_status"))
         record = [
             safe_int(r.get("year")),
             make_ix.get(safe_str(r.get("make")), 0),
@@ -209,10 +255,12 @@ def build(csv_path: Path, output_path: Path) -> None:
             safe_int(r.get("mileage")),
             safe_int(r.get("num_bids")),
             safe_int(r.get("num_views")),
-            # Identity, not truthiness: pandas reads these columns as object dtype
-            # containing True/False/NaN, and bool(nan) is True — which silently
-            # flagged every row with no scraped value as a sale.
-            1 if r.get("sold") is True else 0,
+            # Derived from the outcome rather than read from the CSV's own `sold`
+            # column, so the flag and the taxonomy cannot drift apart. The column
+            # was unreliable anyway: pandas reads it as object dtype containing
+            # True/False/NaN, and bool(nan) is True, which flagged every row with
+            # no scraped value as a sale.
+            1 if outcome in SALE_OUTCOMES else 0,
             1 if r.get("is_no_reserve") is True else 0,
             body_ix.get(safe_str(r.get("body_style")), 0),
             normalize_transmission(r.get("transmission")),
@@ -220,6 +268,7 @@ def build(csv_path: Path, output_path: Path) -> None:
             day_offset(r["end_date"]),  # field 12 — days since epoch, for daily/weekly chart granularity
             color_ix.get(group_color(r.get("exterior_color")), color_ix[COLOR_OTHER]),  # field 13 — color group
             safe_int(r.get("num_comments")),   # field 14 — comment count (engagement signal)
+            OUTCOME_IX[outcome],               # field 15 — auction outcome
         ]
         paired.append((record, detail))
 
@@ -235,10 +284,14 @@ def build(csv_path: Path, output_path: Path) -> None:
     gmv = sum(r[3] for r in records if r[7] == 1 and r[3] >= 0)
     price_unknown = sum(1 for r in records if r[7] == 1 and r[3] < 0)
     months_total = max(r[11] for r in records) + 1
+    outcome_counts = {name: 0 for name in OUTCOMES}
+    for r in records:
+        outcome_counts[OUTCOMES[r[15]]] += 1
 
     meta = {
         "total_listings": len(records),
         "total_sold": sold_count,
+        "outcome_counts": outcome_counts,
         # Sold listings whose price the scraper never captured. Surfaced in meta so
         # the UI can say how much of the sold set is missing from the money math.
         "price_unknown": price_unknown,
@@ -246,7 +299,8 @@ def build(csv_path: Path, output_path: Path) -> None:
         "months_total": months_total,
         "epoch": f"{EPOCH_YEAR}-{EPOCH_MONTH:02d}",
         # 4: sale_price uses PRICE_UNKNOWN (-1) for missing instead of 0
-        "schema_version": 4,
+        # 5: field 15 carries the auction outcome; `sold` is derived from it
+        "schema_version": 5,
         "field_index": {
             "year": 0,
             "make_ix": 1,
@@ -263,6 +317,7 @@ def build(csv_path: Path, output_path: Path) -> None:
             "day_offset": 12,
             "color_ix": 13,
             "comments": 14,
+            "outcome_ix": 15,
         },
         "price_unknown_sentinel": PRICE_UNKNOWN,
     }
@@ -271,6 +326,7 @@ def build(csv_path: Path, output_path: Path) -> None:
         "makes": makes,
         "bodies": bodies,
         "colors": colors,
+        "outcomes": OUTCOMES,
         "records": records,
         "meta": meta,
     }
@@ -302,8 +358,9 @@ def build(csv_path: Path, output_path: Path) -> None:
         f"  Sold:      {sold_count:,}  ({sold_count / len(records) * 100:.1f}% STR)\n"
         f"  GMV:       ${gmv / 1e6:.1f}M\n"
         f"  No price:  {price_unknown:,} sold listings ({price_unknown / sold_count * 100:.1f}% of sold, excluded from GMV)\n"
-        f"  Span:      {months_total} months from {meta['epoch']}\n"
-        f"\nWrote {detail_path} ({detail_kb:.0f} KB)\n"
+        + "".join(f"  {name + ':':<11}{outcome_counts[name]:,}\n" for name in OUTCOMES)
+        + f"  Span:      {months_total} months from {meta['epoch']}\n"
+        + f"\nWrote {detail_path} ({detail_kb:.0f} KB)\n"
         f"  Detail rows: {len(details):,}  (missing url: {missing_url:,})\n"
     )
 

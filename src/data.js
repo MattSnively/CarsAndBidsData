@@ -24,7 +24,50 @@ export const FIELD = {
   dy: 12, // days since epoch (Aug 1, 2021) — used for daily/weekly chart granularity
   cl: 13, // color group index into DATA.colors
   cm: 14, // num_comments (engagement signal)
+  oc: 15, // outcome index into DATA.outcomes — see OUTCOME below
 };
+
+/**
+ * Auction outcomes, indexed to match the `outcomes` lookup in auctions.json.
+ * The order is the wire format — append only, never reorder.
+ *
+ * How each counts toward sell-through:
+ *   SOLD             numerator and denominator
+ *   SOLD_AFTER       denominator; a real sale, but not a live clear, so it is
+ *                    reported alongside the headline rate rather than inside it
+ *   RESERVE_NOT_MET  denominator only
+ *   CANCELED         neither — the auction never got a fair test, so counting
+ *                    it as a failure understates the rate
+ *   UNKNOWN          neither; counted and surfaced rather than hidden
+ */
+export const OUTCOME = {
+  SOLD: 0,
+  SOLD_AFTER: 1,
+  RESERVE_NOT_MET: 2,
+  CANCELED: 3,
+  UNKNOWN: 4,
+};
+
+/** A completed sale, by either route. Mirrors the packed `sold` flag. */
+export function isSale(rec) {
+  const o = rec[FIELD.oc];
+  return o === OUTCOME.SOLD || o === OUTCOME.SOLD_AFTER;
+}
+
+/** Cleared live above reserve — the headline sell-through numerator. */
+export function isLiveSale(rec) {
+  return rec[FIELD.oc] === OUTCOME.SOLD;
+}
+
+/**
+ * Whether the listing belongs in a sell-through denominator at all.
+ * Canceled auctions never got a fair test and unknown ones were never read,
+ * so both are excluded and reported separately.
+ */
+export function countsInRate(rec) {
+  const o = rec[FIELD.oc];
+  return o !== OUTCOME.CANCELED && o !== OUTCOME.UNKNOWN;
+}
 
 /**
  * True when the record carries a real sale price.
@@ -43,6 +86,7 @@ let DATA = {
   makes: [],
   bodies: [],
   colors: [],
+  outcomes: [],
   records: [],
   meta: null,
 };
@@ -144,6 +188,7 @@ export const getData = () => DATA;
 export const getMakes = () => DATA.makes;
 export const getBodies = () => DATA.bodies;
 export const getColors = () => DATA.colors;
+export const getOutcomes = () => DATA.outcomes;
 export const getMeta = () => DATA.meta;
 
 /**
