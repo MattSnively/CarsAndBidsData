@@ -69,6 +69,11 @@ EPOCH_DATE = date_type(2021, 8, 1)
 # hasPrice() check and the existing `p > 0` guards both exclude it.
 PRICE_UNKNOWN = -1
 
+# Make assigned to lots that are not vehicles. Spelled out rather than
+# abbreviated because it appears in the brand filter, where a reader should not
+# have to decode it.
+EXPERIENCE_MAKE = "Experience"
+
 # OUTCOMES — the five mutually exclusive states an auction can end in, and how
 # each counts toward sell-through:
 #
@@ -199,6 +204,23 @@ def safe_str(value, default: str = "", max_len: int | None = None) -> str:
     return s
 
 
+def normalize_make(value) -> str:
+    """
+    Make name, with lots that are not vehicles given their own.
+
+    Cars & Bids also auctions experiences — F1 VIP packages, factory tours,
+    ride-alongs — which have no make, model or mileage. They used to inherit
+    make index 0 from a dict lookup default, and index 0 is a real marque, so
+    all 20 of them were filed under AC alongside its single genuine listing.
+
+    Naming them instead of dropping them keeps a real and growing part of the
+    business visible; the client holds them out of the vehicle-market metrics
+    where a $1,600 ride-along is not a comparable.
+    """
+    s = safe_str(value).strip()
+    return s if s else EXPERIENCE_MAKE
+
+
 def check_invariants(df: pd.DataFrame) -> None:
     """
     Warn about source data that contradicts itself.
@@ -263,8 +285,11 @@ def build(csv_path: Path, output_path: Path) -> None:
     df = df.dropna(subset=["end_date"]).copy()
     print(f"  {len(df):,} records (dropped {before - len(df)} with missing end_date)")
 
-    # Build lookup tables
-    makes = sorted(set(str(m) for m in df["make"].dropna()))
+    # Build lookup tables. Makes come from the normalized column so that every
+    # value packed below is guaranteed to be in the lookup — the old dict-default
+    # of 0 silently filed unmatched rows under whichever make sorted first.
+    df["make"] = df["make"].map(normalize_make)
+    makes = sorted(set(df["make"]))
     bodies = sorted(set(str(b) for b in df["body_style"].dropna()))
     # Colors are built from the fixed list of group labels (plus Other) so the
     # index is stable regardless of which colors appear in the current dataset.
@@ -310,7 +335,9 @@ def build(csv_path: Path, output_path: Path) -> None:
         outcome = classify_row(r.get("auction_status"))
         record = [
             safe_int(r.get("year")),
-            make_ix.get(safe_str(r.get("make")), 0),
+            # No default: normalize_make guarantees the name is in the lookup, so
+            # a KeyError here means the build is wrong and should say so loudly.
+            make_ix[r["make"]],
             normalize_model(r.get("model")),
             safe_int(r.get("sale_price"), PRICE_UNKNOWN),
             safe_int(r.get("mileage")),

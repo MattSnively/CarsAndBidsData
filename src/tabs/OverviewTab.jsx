@@ -270,7 +270,11 @@ export function OverviewTab({ setTab, setDrillMetric }) {
       key: "gmv",
       label: "Total GMV",
       value: fmtK(kpis.totalGMV),
-      sub: "gross merchandise value",
+      // Non-vehicle lots are real revenue but not car sales, so their value is
+      // named here rather than folded into a figure about the car market.
+      sub: kpis.experienceValue > 0
+        ? `vehicles only · ${fmtK(kpis.experienceValue)} in ${kpis.experienceSold} experience lots`
+        : "gross merchandise value",
       drillTo: "Trends",
       drillMetric: "gmv",
     },

@@ -111,6 +111,27 @@ let DATA = {
 let MODEL_INDEX = null;
 let MAKE_COUNTS = null;
 
+/**
+ * Make given to lots that are not vehicles — Cars & Bids also auctions
+ * experiences (F1 VIP packages, factory tours, ride-alongs), which have no
+ * make, model or mileage.
+ *
+ * They are real closed transactions and stay in listing counts and
+ * sell-through, but they are held out of the vehicle-market metrics: a $1,600
+ * ride-along is not a price comparable for a car, and averaging it against one
+ * says nothing true about either.
+ *
+ * The index is resolved once per load rather than compared as a string on every
+ * record, since these guards run inside every aggregation.
+ */
+export const EXPERIENCE_MAKE = "Experience";
+let EXPERIENCE_IX = -1;
+
+/** False for non-vehicle lots, which have no place in price or GMV figures. */
+export function isVehicle(rec) {
+  return rec[FIELD.mk] !== EXPERIENCE_IX;
+}
+
 // Per-listing detail sidecar (public/data/details.json). Deliberately NOT loaded
 // by loadData() — it is comparable in size to the whole packed dataset and only
 // the Model page needs it, so every other tab avoids paying for it. DETAILS holds
@@ -129,6 +150,9 @@ export async function loadData(baseUrl = "/") {
   }
   const json = await res.json();
   DATA = json;
+  // -1 when the build produced no Experience lots, which makes isVehicle()
+  // true for every record — the right answer, since there are none to exclude.
+  EXPERIENCE_IX = DATA.makes.indexOf(EXPERIENCE_MAKE);
   MODEL_INDEX = null;
   MAKE_COUNTS = null;
   DETAILS = null;
@@ -349,9 +373,12 @@ export function computeKPIs(records) {
   let total = 0;
   let canceled = 0;
   let sold = 0;
+  let soldVehicles = 0;
   let priced = 0;
   let gmv = 0;
   let bids = 0;
+  let experienceValue = 0;
+  let experienceSold = 0;
   for (const r of records) {
     if (!countsInRate(r)) {
       canceled++;
@@ -361,9 +388,19 @@ export function computeKPIs(records) {
     bids += r[FIELD.b];
     if (r[FIELD.s] === 1) {
       sold++;
-      if (hasPrice(r)) {
-        priced++;
-        gmv += r[FIELD.p];
+      // Non-vehicle lots stay in the sale count — Cars & Bids closed them — but
+      // out of the money figures, which describe a car market.
+      if (isVehicle(r)) {
+        soldVehicles++;
+        if (hasPrice(r)) {
+          priced++;
+          gmv += r[FIELD.p];
+        }
+      } else if (hasPrice(r)) {
+        // Tracked separately so the money is reportable without being folded
+        // into a car-market total. Without this it would simply disappear.
+        experienceValue += r[FIELD.p];
+        experienceSold++;
       }
     }
   }
@@ -371,6 +408,7 @@ export function computeKPIs(records) {
     return {
       totalListed: 0, totalSold: 0, totalGMV: 0, str: 0,
       avgPrice: 0, avgBids: 0, priceUnknown: 0, canceled,
+      experienceValue: 0, experienceSold: 0,
     };
   }
   return {
@@ -381,8 +419,13 @@ export function computeKPIs(records) {
     // Averaged over sales with a known price, not all sales — dividing by `sold`
     // would spread the same GMV across listings that contributed nothing to it.
     avgPrice: priced > 0 ? gmv / priced : 0,
-    priceUnknown: sold - priced,
+    // Vehicle sales whose price was never captured. Counted against sold
+    // vehicles, not all sales, so the non-vehicle lots — which do have prices,
+    // just not comparable ones — are not miscounted as a data gap.
+    priceUnknown: soldVehicles - priced,
     canceled,
+    experienceValue,
+    experienceSold,
     avgBids: bids / total,
   };
 }
@@ -406,14 +449,23 @@ export function computeKPIsSplit(universeRecords, soldRecords) {
     if (r[FIELD.s] === 1) universeSold++;
   }
   let bandedSold = 0;
+  let bandedVehicles = 0;
   let bandedPriced = 0;
   let bandedGMV = 0;
+  let experienceValue = 0;
+  let experienceSold = 0;
   for (const r of soldRecords) {
     if (r[FIELD.s] === 1) {
       bandedSold++;
-      if (hasPrice(r)) {
-        bandedPriced++;
-        bandedGMV += r[FIELD.p];
+      if (isVehicle(r)) {
+        bandedVehicles++;
+        if (hasPrice(r)) {
+          bandedPriced++;
+          bandedGMV += r[FIELD.p];
+        }
+      } else if (hasPrice(r)) {
+        experienceValue += r[FIELD.p];
+        experienceSold++;
       }
     }
   }
@@ -423,8 +475,10 @@ export function computeKPIsSplit(universeRecords, soldRecords) {
     totalGMV: bandedGMV,
     str: total > 0 ? (universeSold / total) * 100 : 0, // STR ignores price band
     avgPrice: bandedPriced > 0 ? bandedGMV / bandedPriced : 0,
-    priceUnknown: bandedSold - bandedPriced,
+    priceUnknown: bandedVehicles - bandedPriced,
     canceled,
+    experienceValue,
+    experienceSold,
     avgBids: total > 0 ? universeBids / total : 0,
   };
 }
@@ -619,8 +673,9 @@ export function computePriceDist(records) {
   const counts = PRICE_BANDS.map((b) => ({ ...b, count: 0 }));
   for (const r of records) {
     // A sale with no captured price has no bucket. Before this guard it landed in
-    // <$5k, because the packed 0 satisfied that band's `min`.
-    if (r[FIELD.s] !== 1 || !hasPrice(r)) continue;
+    // <$5k, because the packed 0 satisfied that band's `min`. Non-vehicle lots
+    // are excluded too — a ride-along's price is not a used-car price.
+    if (r[FIELD.s] !== 1 || !hasPrice(r) || !isVehicle(r)) continue;
     const p = r[FIELD.p];
     for (const b of counts) {
       if (p >= b.min && p < b.max) {
