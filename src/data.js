@@ -320,18 +320,31 @@ export function applyAllFilters(filters) {
 /* ============================================================
    AGGREGATIONS
    Each takes a pre-filtered record array and computes one chart's data.
+
+   SELL-THROUGH DENOMINATOR
+   Every rate below divides by the listings that actually went to market —
+   all records except canceled and unknown ones (see countsInRate). A canceled
+   auction never got a chance to sell, so counting it as a failure understates
+   the rate; an unknown one was never read at all.
+
+   The listing counts these functions report use that same denominator, so a
+   displayed fraction always agrees with the percentage beside it. Cancellations
+   are returned separately as `canceled` rather than silently dropped.
    ============================================================ */
 
 export function computeKPIs(records) {
-  const total = records.length;
-  if (total === 0) {
-    return { totalListed: 0, totalSold: 0, totalGMV: 0, str: 0, avgPrice: 0, avgBids: 0 };
-  }
+  let total = 0;
+  let canceled = 0;
   let sold = 0;
   let priced = 0;
   let gmv = 0;
   let bids = 0;
   for (const r of records) {
+    if (!countsInRate(r)) {
+      canceled++;
+      continue;
+    }
+    total++;
     bids += r[FIELD.b];
     if (r[FIELD.s] === 1) {
       sold++;
@@ -340,6 +353,12 @@ export function computeKPIs(records) {
         gmv += r[FIELD.p];
       }
     }
+  }
+  if (total === 0) {
+    return {
+      totalListed: 0, totalSold: 0, totalGMV: 0, str: 0,
+      avgPrice: 0, avgBids: 0, priceUnknown: 0, canceled,
+    };
   }
   return {
     totalListed: total,
@@ -350,6 +369,7 @@ export function computeKPIs(records) {
     // would spread the same GMV across listings that contributed nothing to it.
     avgPrice: priced > 0 ? gmv / priced : 0,
     priceUnknown: sold - priced,
+    canceled,
     avgBids: bids / total,
   };
 }
@@ -359,10 +379,16 @@ export function computeKPIs(records) {
  * but GMV / avg price are constrained to the price-band selection (so they're meaningful).
  */
 export function computeKPIsSplit(universeRecords, soldRecords) {
-  const total = universeRecords.length;
+  let total = 0;
+  let canceled = 0;
   let universeSold = 0;
   let universeBids = 0;
   for (const r of universeRecords) {
+    if (!countsInRate(r)) {
+      canceled++;
+      continue;
+    }
+    total++;
     universeBids += r[FIELD.b];
     if (r[FIELD.s] === 1) universeSold++;
   }
@@ -385,6 +411,7 @@ export function computeKPIsSplit(universeRecords, soldRecords) {
     str: total > 0 ? (universeSold / total) * 100 : 0, // STR ignores price band
     avgPrice: bandedPriced > 0 ? bandedGMV / bandedPriced : 0,
     priceUnknown: bandedSold - bandedPriced,
+    canceled,
     avgBids: total > 0 ? universeBids / total : 0,
   };
 }
@@ -392,6 +419,7 @@ export function computeKPIsSplit(universeRecords, soldRecords) {
 export function computeByMake(records, topN = 10) {
   const map = new Map();
   for (const r of records) {
+    if (!countsInRate(r)) continue;
     const mk = DATA.makes[r[FIELD.mk]];
     let m = map.get(mk);
     if (!m) {
@@ -421,6 +449,7 @@ export function computeByMake(records, topN = 10) {
 export function computeByMonth(records) {
   const map = new Map();
   for (const r of records) {
+    if (!countsInRate(r)) continue;
     const mo = r[FIELD.mo];
     let m = map.get(mo);
     if (!m) {
@@ -454,6 +483,7 @@ export function computeByMonth(records) {
 export function computeByWeek(records) {
   const map = new Map();
   for (const r of records) {
+    if (!countsInRate(r)) continue;
     const wo = Math.floor(r[FIELD.dy] / 7); // week offset from epoch
     let w = map.get(wo);
     if (!w) {
@@ -489,6 +519,7 @@ export function computeByWeek(records) {
 export function computeByDay(records) {
   const map = new Map();
   for (const r of records) {
+    if (!countsInRate(r)) continue;
     const dy = r[FIELD.dy];
     let d = map.get(dy);
     if (!d) {
@@ -528,6 +559,7 @@ export function computeByMonthSplit(universeRecords, soldRecords) {
   // Build the universe map: listings, sold count, bids for STR calculation
   const uMap = new Map();
   for (const r of universeRecords) {
+    if (!countsInRate(r)) continue;
     const mo = r[FIELD.mo];
     let m = uMap.get(mo);
     if (!m) {
@@ -593,6 +625,7 @@ export function computeReserveSplit(records) {
     rListed = 0,
     rSold = 0;
   for (const r of records) {
+    if (!countsInRate(r)) continue;
     if (r[FIELD.nr] === 1) {
       nrListed++;
       if (r[FIELD.s] === 1) nrSold++;
@@ -929,6 +962,7 @@ export function computeBreakoutsByMake(records, threshold = 0.25, topN = 15) {
 export function computeSTRByYear(records) {
   const map = new Map();
   for (const r of records) {
+    if (!countsInRate(r)) continue;
     const year = 2021 + Math.floor((r[FIELD.mo] + 7) / 12);
     let entry = map.get(year);
     if (!entry) {
@@ -968,6 +1002,7 @@ export function computeSTRHeadlineStats(records) {
   // Track bid counts to show failed reserve auctions were not "unwanted"
   let rFailedBids = 0, rSoldBids = 0;
   for (const r of records) {
+    if (!countsInRate(r)) continue;
     if (r[FIELD.nr] === 1) {
       nrListed++;
       if (r[FIELD.s] === 1) nrSold++;
@@ -1014,6 +1049,7 @@ export function computeSTRHeadlineStats(records) {
 export function computeReserveFailByMake(records, topN = 15) {
   const map = new Map();
   for (const r of records) {
+    if (!countsInRate(r)) continue;
     if (r[FIELD.nr] === 1) continue; // reserve listings only
     const mk = DATA.makes[r[FIELD.mk]];
     let entry = map.get(mk);
@@ -1068,6 +1104,7 @@ export function computeReserveFailByMake(records, topN = 15) {
 export function computeBubbleData(records, topN = 40) {
   const map = new Map();
   for (const r of records) {
+    if (!countsInRate(r)) continue;
     const mk = DATA.makes[r[FIELD.mk]];
     let m = map.get(mk);
     if (!m) { m = { make: mk, bids: 0, gmv: 0, sold: 0, priced: 0, listings: 0 }; map.set(mk, m); }
