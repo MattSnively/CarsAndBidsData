@@ -774,25 +774,38 @@ export function groupScatterByMake(points) {
    ============================================================ */
 
 /**
- * Sold auctions for one model as scatter points of sale date against sale price.
+ * One model's auctions as scatter points of end date against the money the
+ * auction reached — the sale price when it sold, the top bid when it did not.
+ *
+ * Both outcomes are plotted so the page shows the whole market rather than only
+ * its cleared half: the unsold points are the listings behind the sell-through
+ * gap, and reading them against the sold cloud is how you see where a model's
+ * reserves are landing too high. Each point carries `sold` so the caller can
+ * render the two as visually distinct series.
  *
  * Carries each point's index in DATA.records so the tooltip can pull the listing's
  * url and color from the detail sidecar, which is addressed by that same index —
  * the reason this walks the records array rather than reusing applyAllFilters(),
  * which returns records stripped of their position.
  *
- * Sold listings with no captured price are excluded: they are a known scraper gap
- * (CarsAndBidsData-35n) and would otherwise pile onto the axis floor.
+ * Excluded, in both cases because the y value would be a fiction:
+ *   - sold with no captured price (known scraper gap, CarsAndBidsData-35n)
+ *   - unsold with no captured high bid (same root cause, CarsAndBidsData-ibh)
+ * Canceled auctions are excluded outright — they never went to market, the same
+ * reason countsInRate() keeps them out of sell-through.
  */
-export function computeModelSales(model, filters = null) {
+export function computeModelPoints(model, filters = null) {
   if (!model) return [];
   const lookups = filters ? buildUniverseLookups(filters) : null;
   const points = [];
   for (let i = 0; i < DATA.records.length; i++) {
     const r = DATA.records[i];
     if (r[FIELD.md] !== model) continue;
-    if (r[FIELD.s] !== 1) continue;
-    if (r[FIELD.p] <= 0) continue;
+    const sold = r[FIELD.s] === 1;
+    // A sale plots at its price, an unsold auction at the top bid it reached.
+    const price = sold ? r[FIELD.p] : r[FIELD.hb];
+    if (price <= 0) continue;
+    if (!sold && r[FIELD.oc] !== OUTCOME.RESERVE_NOT_MET) continue;
     // Honour the other active filters so the page agrees with the global state,
     // minus the model clause the caller is already selecting on.
     if (lookups && !passesUniverse(r, filters, { ...lookups, models: null })) {
@@ -801,7 +814,8 @@ export function computeModelSales(model, filters = null) {
     points.push({
       index: i,
       day: r[FIELD.dy],
-      price: r[FIELD.p],
+      price,
+      sold,
       mileage: r[FIELD.mi],
       year: r[FIELD.yr],
       make: DATA.makes[r[FIELD.mk]],

@@ -19,7 +19,7 @@ import { useFilters } from "../components/FilterContext.jsx";
 import {
   applyModelFilters,
   computeKPIs,
-  computeModelSales,
+  computeModelPoints,
   computePriceDist,
   computeReserveSplit,
   getListingDetail,
@@ -70,50 +70,83 @@ function Stat({ label, value, sub }) {
 }
 
 /**
- * Legend for the mileage ramp. The ramp encodes magnitude, so it ships with the
- * band boundaries spelled out — color never carries the meaning on its own.
+ * Key for both encodings on the scatter: fill carries the auction's outcome,
+ * color carries mileage. Keeping them on separate channels is what lets an
+ * unsold point still say what the car's odometer read.
+ *
+ * The ramp ships with its band boundaries spelled out — color never carries the
+ * meaning on its own — and the outcome marks are drawn in a neutral gray so the
+ * key reads as "filled vs. open", not as two more ramp colors.
  */
-function MileageLegend({ scale, hasUnknown }) {
-  if (!scale) return null;
+function ChartLegend({ scale, hasUnknown, hasUnsold }) {
+  if (!scale && !hasUnsold) return null;
   return (
-    <div className="flex items-center gap-3 flex-wrap px-4 pb-3">
-      <span className="text-[10.5px]" style={{ color: GRAY_500 }}>
-        Mileage
-      </span>
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {scale.bands.map((b) => (
-          <span key={b.label} className="flex items-center gap-1">
-            <span
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: 2,
-                background: b.color,
-                display: "inline-block",
-              }}
-            />
-            <span className="text-[10.5px] tabular-nums" style={{ color: GRAY_700 }}>
-              {b.label}
+    <div className="flex items-center gap-x-5 gap-y-2 flex-wrap px-4 pb-3">
+      {hasUnsold && (
+        <div className="flex items-center gap-3">
+          {[
+            { label: "Sold", fill: GRAY_700 },
+            { label: "Unsold · high bid", fill: CARD_BG },
+          ].map((o) => (
+            <span key={o.label} className="flex items-center gap-1">
+              <svg width="11" height="11" aria-hidden="true">
+                <circle
+                  cx="5.5"
+                  cy="5.5"
+                  r="4"
+                  fill={o.fill}
+                  stroke={GRAY_700}
+                  strokeWidth="1.5"
+                />
+              </svg>
+              <span className="text-[10.5px]" style={{ color: GRAY_700 }}>
+                {o.label}
+              </span>
             </span>
+          ))}
+        </div>
+      )}
+      {scale && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-[10.5px]" style={{ color: GRAY_500 }}>
+            Mileage
           </span>
-        ))}
-        {hasUnknown && (
-          <span className="flex items-center gap-1">
-            <span
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: 2,
-                background: MILEAGE_UNKNOWN_COLOR,
-                display: "inline-block",
-              }}
-            />
-            <span className="text-[10.5px]" style={{ color: GRAY_700 }}>
-              not recorded
-            </span>
-          </span>
-        )}
-      </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {scale.bands.map((b) => (
+              <span key={b.label} className="flex items-center gap-1">
+                <span
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 2,
+                    background: b.color,
+                    display: "inline-block",
+                  }}
+                />
+                <span className="text-[10.5px] tabular-nums" style={{ color: GRAY_700 }}>
+                  {b.label}
+                </span>
+              </span>
+            ))}
+            {hasUnknown && (
+              <span className="flex items-center gap-1">
+                <span
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 2,
+                    background: MILEAGE_UNKNOWN_COLOR,
+                    display: "inline-block",
+                  }}
+                />
+                <span className="text-[10.5px]" style={{ color: GRAY_700 }}>
+                  not recorded
+                </span>
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -149,10 +182,20 @@ function SaleTooltip({ active, payload, detailsReady }) {
         {p.year} {p.make} {p.model}
       </div>
       <div className="text-[10.5px] mb-2" style={{ color: TOOLTIP_MUTED }}>
-        Sold {dayLabelFull(p.day)}
+        {p.sold ? "Sold" : "Reserve not met ·"} {dayLabelFull(p.day)}
       </div>
-      <div className="text-[18px] font-bold mb-2" style={{ color: LIME }}>
+      {/* LIME is the money-changed-hands color everywhere else on the site, so a
+          high bid that never closed deliberately does not get it. */}
+      <div
+        className="text-[18px] font-bold mb-2"
+        style={{ color: p.sold ? LIME : "white" }}
+      >
         {fmtFull(p.price)}
+        {!p.sold && (
+          <span className="text-[10.5px] font-medium ml-1.5" style={{ color: TOOLTIP_MUTED }}>
+            high bid
+          </span>
+        )}
       </div>
       <div className="flex flex-col gap-0.5">
         <Row
@@ -214,9 +257,13 @@ export function ModelTab() {
   }, [model]);
 
   const points = useMemo(
-    () => (model ? computeModelSales(model, filters) : []),
+    () => (model ? computeModelPoints(model, filters) : []),
     [model, filters],
   );
+  // Recharts needs one <Scatter> per visual treatment, so the outcomes are split
+  // here rather than branched inside a single series.
+  const soldPoints = useMemo(() => points.filter((p) => p.sold), [points]);
+  const unsoldPoints = useMemo(() => points.filter((p) => !p.sold), [points]);
   const records = useMemo(
     () => (model ? applyModelFilters(model, filters) : []),
     [model, filters],
@@ -265,6 +312,13 @@ export function ModelTab() {
     );
   }
 
+  const markColor = (p) =>
+    mileageScale ? mileageScale.colorFor(p.mileage) : MILEAGE_UNKNOWN_COLOR;
+  const openListing = (pt) => {
+    const detail = getListingDetail(pt?.index);
+    if (detail?.url) window.open(detail.url, "_blank", "noopener");
+  };
+
   const priceValues = points.map((p) => p.price);
   const yMax = priceValues.length ? Math.max(...priceValues) : 0;
   const days = points.map((p) => p.day);
@@ -295,13 +349,14 @@ export function ModelTab() {
                 {kpis.canceled.toLocaleString()} canceled
               </span>
             )}
-            {points.length !== kpis.totalSold && (
+            {points.length !== kpis.totalListed && (
               <>
                 {" · "}
                 {points.length.toLocaleString()} plotted
-                <span title="Sold listings with no recorded sale price are excluded">
+                <span title="A listing can only be plotted at a real number: a sale needs a recorded sale price, an unsold auction a recorded high bid. The scraper missed both on some listings.">
                   {" "}
-                  ({(kpis.totalSold - points.length).toLocaleString()} without a price)
+                  ({(kpis.totalListed - points.length).toLocaleString()} with no
+                  recorded price or high bid)
                 </span>
               </>
             )}
@@ -321,11 +376,11 @@ export function ModelTab() {
 
       <Card className="mb-3">
         <CardHeader
-          title="Sale price over time"
+          title="Sale price and high bids over time"
           sub={
             points.length
-              ? "Each point is one sold auction · color is mileage · click to open the listing"
-              : "No sold auctions with a recorded price match the current filters"
+              ? "Each point is one auction, sold or not · color is mileage · click to open the listing"
+              : "No auctions with a recorded price or high bid match the current filters"
           }
           right={
             detailsError ? (
@@ -370,26 +425,19 @@ export function ModelTab() {
                   cursor={{ strokeDasharray: "2 2", stroke: GRAY_300 }}
                 />
                 <Scatter
-                  data={points}
+                  data={soldPoints}
                   // Recharts sizes symbols by area; 64 gives ~9px marks, enough
                   // for the mileage shade to be readable on a single dot.
                   shape="circle"
                   legendType="none"
                   isAnimationActive={false}
-                  onClick={(pt) => {
-                    const detail = getListingDetail(pt?.index);
-                    if (detail?.url) window.open(detail.url, "_blank", "noopener");
-                  }}
+                  onClick={openListing}
                   style={{ cursor: detailsReady ? "pointer" : "default" }}
                 >
-                  {points.map((p) => (
+                  {soldPoints.map((p) => (
                     <Cell
                       key={p.index}
-                      fill={
-                        mileageScale
-                          ? mileageScale.colorFor(p.mileage)
-                          : MILEAGE_UNKNOWN_COLOR
-                      }
+                      fill={markColor(p)}
                       fillOpacity={0.85}
                       // A surface-colored ring keeps overlapping points readable
                       // where sales cluster.
@@ -398,9 +446,34 @@ export function ModelTab() {
                     />
                   ))}
                 </Scatter>
+                {/* Drawn after the sales so the open marks stay legible where the
+                    two clouds overlap. The card-colored fill is deliberate rather
+                    than "none": a hollow symbol has no hit area, which would cost
+                    these points their tooltip and click-through. */}
+                <Scatter
+                  data={unsoldPoints}
+                  shape="circle"
+                  legendType="none"
+                  isAnimationActive={false}
+                  onClick={openListing}
+                  style={{ cursor: detailsReady ? "pointer" : "default" }}
+                >
+                  {unsoldPoints.map((p) => (
+                    <Cell
+                      key={p.index}
+                      fill={CARD_BG}
+                      stroke={markColor(p)}
+                      strokeWidth={1.75}
+                    />
+                  ))}
+                </Scatter>
               </ScatterChart>
             </ResponsiveContainer>
-            <MileageLegend scale={mileageScale} hasUnknown={hasUnknownMileage} />
+            <ChartLegend
+              scale={mileageScale}
+              hasUnknown={hasUnknownMileage}
+              hasUnsold={unsoldPoints.length > 0}
+            />
           </>
         ) : (
           <div className="px-5 py-12 text-center text-[12px]" style={{ color: GRAY_500 }}>
