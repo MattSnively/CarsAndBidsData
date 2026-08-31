@@ -186,8 +186,8 @@ export function OverviewTab({ setTab, setDrillMetric }) {
      no-make     = all filters (incl. price band) minus makes, so the by-make
                    chart shows all makes with the user's selection highlighted
                    AND reacts to price-band selection.
-     no-reserve  = all filters (incl. price band) minus reserve, so both
-                   reserve tiles stay visible AND react to price-band selection.
+     no-reserve  = universe filters minus reserve, so both reserve tiles stay
+                   visible. Universe and not "all" on purpose — see below.
   ──────────────────────────────────────────────────────────── */
   const universeRecords = useMemo(
     () => applyUniverseFilters(filters),
@@ -204,8 +204,13 @@ export function OverviewTab({ setTab, setDrillMetric }) {
     () => applyAllFilters({ ...filters, makes: [] }),
     [filters],
   );
+  // Universe, not applyAllFilters: a price band is a band of SALE prices, so
+  // passesPriceBand() drops every unsold listing by design. Feeding that through
+  // to a sell-through denominator leaves only sales, and both tiles read a flat
+  // 100%. Sell-through ignores the price band here for the same reason it does
+  // in computeKPIsSplit and in the Trends tab's source: "universe" metrics.
   const noReserveUniverse = useMemo(
-    () => applyAllFilters({ ...filters, reserve: null }),
+    () => applyUniverseFilters({ ...filters, reserve: null }),
     [filters],
   );
 
@@ -859,7 +864,14 @@ export function OverviewTab({ setTab, setDrillMetric }) {
         )}
 
         <Card>
-          <CardHeader title="Reserve vs. No Reserve" sub="Click either side to filter" />
+          <CardHeader
+            title="Reserve vs. No Reserve"
+            sub={
+              filters.priceBands.length
+                ? "Click either side to filter · sell-through ignores the price band"
+                : "Click either side to filter"
+            }
+          />
           <div className="px-5 pb-4 pt-2">
             <div className="grid grid-cols-2 gap-3 mb-4">
               <button
