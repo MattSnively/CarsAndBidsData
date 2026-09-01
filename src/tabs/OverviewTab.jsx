@@ -30,6 +30,7 @@ import {
   groupScatterByMake,
 } from "../data.js";
 import {
+  CARD_BG,
   GRAY_100,
   GRAY_200,
   GRAY_300,
@@ -54,6 +55,30 @@ import {
 function ScatterPanel({ scatterPts, filters, height, selectedPoint, onPointClick }) {
   const multiMake = filters.makes.length >= 2;
   const byMake = multiMake ? groupScatterByMake(scatterPts) : null;
+
+  /**
+   * One outcome's worth of a series. Sales are solid; unsold auctions are drawn
+   * as open rings in the same color, so outcome rides on fill alone and the hue
+   * stays free to mean make. CARD_BG rather than "none" for the ring: a hollow
+   * symbol has no hit area and would lose its tooltip.
+   */
+  const series = (data, color, key) => [
+    <Scatter
+      key={`${key}-sold`}
+      name={key}
+      data={data.filter((p) => p.sold)}
+      fill={color}
+      fillOpacity={multiMake ? 0.6 : 0.5}
+    />,
+    <Scatter
+      key={`${key}-unsold`}
+      data={data.filter((p) => !p.sold)}
+      fill={CARD_BG}
+      stroke={color}
+      strokeWidth={1.5}
+      legendType="none"
+    />,
+  ];
 
   // Derive axis ceilings directly from the filtered data. Recharts' dataMax callback
   // on ScatterChart does not reliably recalculate when data changes after a filter
@@ -85,8 +110,14 @@ function ScatterPanel({ scatterPts, filters, height, selectedPoint, onPointClick
         </div>
         <div style={{ opacity: 0.8 }}>{d.model}</div>
         <div className="mt-1">
-          {(d.mileage / 1000).toFixed(0)}k mi · {fmtFull(d.price)} · {d.bids} bids
+          {(d.mileage / 1000).toFixed(0)}k mi · {fmtFull(d.price)}
+          {!d.sold && <span style={{ opacity: 0.75 }}> high bid</span>} · {d.bids} bids
         </div>
+        {!d.sold && (
+          <div className="mt-0.5" style={{ opacity: 0.75 }}>
+            Reserve not met
+          </div>
+        )}
         <div className="mt-0.5" style={{ opacity: 0.75 }}>
           {d.colorGroup} · {txLabel}{d.noReserve ? " · No Reserve" : ""}
         </div>
@@ -139,21 +170,10 @@ function ScatterPanel({ scatterPts, filters, height, selectedPoint, onPointClick
           />
           <Tooltip content={scatterTooltip} cursor={{ strokeDasharray: "2 2" }} />
           {multiMake
-            ? filters.makes.map((make, i) => (
-                <Scatter
-                  key={make}
-                  name={make}
-                  data={byMake.get(make) || []}
-                  fill={MAKE_COLORS[i % MAKE_COLORS.length]}
-                  fillOpacity={0.6}
-                />
-              ))
-            : <Scatter
-                data={scatterPts}
-                fill={LIME_DEEP}
-                fillOpacity={0.5}
-              />
-          }
+            ? filters.makes.flatMap((make, i) =>
+                series(byMake.get(make) || [], MAKE_COLORS[i % MAKE_COLORS.length], make),
+              )
+            : series(scatterPts, LIME_DEEP, "all")}
           {filters.mileageMax !== null && (
             <ReferenceLine
               x={filters.mileageMax}
@@ -178,6 +198,9 @@ export function OverviewTab({ setTab, setDrillMetric }) {
   const { filters, setFilters } = useFilters();
   const [showAllMakes, setShowAllMakes] = useState(false);
   const [scatterExpanded, setScatterExpanded] = useState(false);
+  // Chart-local on purpose. As a global filter this would land in every
+  // sell-through denominator and read as a flat 100%.
+  const [showUnsold, setShowUnsold] = useState(false);
   const [selectedPoint, setSelectedPoint] = useState(null);
 
   /* ── Filter sets ─────────────────────────────────────────────
@@ -238,10 +261,19 @@ export function OverviewTab({ setTab, setDrillMetric }) {
     () => computeReserveSplit(noReserveUniverse),
     [noReserveUniverse],
   );
-  // Scatter respects all filters (it's a sold-only view)
+  // Universe rather than the price-band-filtered set: computeScatterPoints bands
+  // on the value it actually plots, so unsold auctions can be banded by high bid.
   const scatterPts = useMemo(
-    () => computeScatterPoints(soldFilteredRecords, 500),
-    [soldFilteredRecords],
+    () =>
+      computeScatterPoints(universeRecords, 500, {
+        priceBands: filters.priceBands,
+        includeUnsold: showUnsold,
+      }),
+    [universeRecords, filters.priceBands, showUnsold],
+  );
+  const unsoldShown = useMemo(
+    () => scatterPts.filter((p) => !p.sold).length,
+    [scatterPts],
   );
 
   const toggleMake = (make) =>
@@ -650,11 +682,14 @@ export function OverviewTab({ setTab, setDrillMetric }) {
 
         <Card>
           <CardHeader
-            title="Mileage vs. Sale Price"
+            title={showUnsold ? "Mileage vs. Price Reached" : "Mileage vs. Sale Price"}
             sub={
-              filters.makes.length >= 2
+              (filters.makes.length >= 2
                 ? "Color per make · click expand for full view with point details"
-                : "Click expand icon for full view with point details"
+                : "Click expand icon for full view with point details") +
+              (showUnsold
+                ? ` · ${unsoldShown.toLocaleString()} unsold plotted at their high bid`
+                : "")
             }
             right={
               <div className="flex items-center gap-2">
@@ -701,17 +736,50 @@ export function OverviewTab({ setTab, setDrillMetric }) {
             selectedPoint={null}
             onPointClick={null}
           />
-          {/* Multi-make legend */}
-          {filters.makes.length >= 2 && (
-            <div className="px-4 pb-3 flex flex-wrap gap-3">
-              {filters.makes.map((mk, i) => (
-                <div key={mk} className="flex items-center gap-1.5 text-[10.5px]" style={{ color: GRAY_500 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: 99, background: MAKE_COLORS[i % MAKE_COLORS.length] }} />
-                  {mk}
-                </div>
-              ))}
-            </div>
-          )}
+          {/* Outcome toggle + key, then the multi-make legend */}
+          <div className="px-4 pb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <button
+              onClick={() => setShowUnsold((v) => !v)}
+              className="px-2 py-0.5 text-[10.5px] font-medium transition-colors"
+              style={{
+                background: showUnsold ? INK_SURFACE : GRAY_100,
+                color: showUnsold ? "white" : GRAY_700,
+                borderRadius: 3,
+              }}
+              title="Plot reserve-not-met auctions at the high bid they reached"
+            >
+              Show unsold
+            </button>
+            {showUnsold && (
+              <div className="flex items-center gap-3">
+                {[
+                  { label: "Sold", fill: GRAY_700 },
+                  { label: "Unsold · high bid", fill: CARD_BG },
+                ].map((o) => (
+                  <div
+                    key={o.label}
+                    className="flex items-center gap-1.5 text-[10.5px]"
+                    style={{ color: GRAY_500 }}
+                  >
+                    <svg width="9" height="9" aria-hidden="true">
+                      <circle cx="4.5" cy="4.5" r="3.4" fill={o.fill} stroke={GRAY_700} strokeWidth="1.3" />
+                    </svg>
+                    {o.label}
+                  </div>
+                ))}
+              </div>
+            )}
+            {filters.makes.length >= 2 && (
+              <div className="flex flex-wrap gap-3">
+                {filters.makes.map((mk, i) => (
+                  <div key={mk} className="flex items-center gap-1.5 text-[10.5px]" style={{ color: GRAY_500 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: 99, background: MAKE_COLORS[i % MAKE_COLORS.length] }} />
+                    {mk}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </Card>
 
         {/* ── Full-screen scatter modal ─────────────────────────── */}
@@ -738,13 +806,26 @@ export function OverviewTab({ setTab, setDrillMetric }) {
               <div className="flex items-center justify-between px-5 pt-4 pb-2">
                 <div>
                   <div className="text-[16px] font-semibold tracking-tight" style={{ color: INK }}>
-                    Mileage vs. Sale Price
+                    {showUnsold ? "Mileage vs. Price Reached" : "Mileage vs. Sale Price"}
                   </div>
                   <div className="text-[11.5px] mt-0.5" style={{ color: GRAY_500 }}>
                     Click any point to inspect · hover to preview
+                    {showUnsold && " · open rings are unsold, at their high bid"}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setShowUnsold((v) => !v)}
+                    className="px-2.5 py-1 text-[11px] font-medium transition-colors"
+                    style={{
+                      background: showUnsold ? INK_SURFACE : GRAY_100,
+                      color: showUnsold ? "white" : GRAY_700,
+                      borderRadius: 4,
+                    }}
+                    title="Plot reserve-not-met auctions at the high bid they reached"
+                  >
+                    Show unsold
+                  </button>
                   <div
                     className="flex items-center gap-1 p-0.5"
                     style={{ background: GRAY_100, borderRadius: 4 }}
@@ -807,7 +888,17 @@ export function OverviewTab({ setTab, setDrillMetric }) {
                       </div>
                       <div className="space-y-2">
                         {[
-                          { label: "Sale Price", value: fmtFull(selectedPoint.price) },
+                          {
+                            // An unsold auction's y value is the top bid it drew,
+                            // never a sale price — labelling it as one would report
+                            // a transaction that did not happen.
+                            label: selectedPoint.sold ? "Sale Price" : "High Bid",
+                            value: fmtFull(selectedPoint.price),
+                          },
+                          {
+                            label: "Outcome",
+                            value: selectedPoint.sold ? "Sold" : "Reserve not met",
+                          },
                           { label: "Mileage", value: `${(selectedPoint.mileage / 1000).toFixed(1)}k mi` },
                           { label: "Bids", value: selectedPoint.bids },
                           { label: "Color", value: selectedPoint.colorGroup },

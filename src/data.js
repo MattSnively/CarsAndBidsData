@@ -719,39 +719,66 @@ export function computeReserveSplit(records) {
 /**
  * Scatter sample for the mileage-vs-price plot. Includes make/year/model/color
  * so the tooltip can display vehicle info and multi-make coloring can work.
- * Always shows sold listings with sane bounds; subsamples to `max` points
- * for performance.
+ *
+ * Takes UNIVERSE records and applies the price band itself, rather than taking
+ * an applyAllFilters() set. The y value here is the money the auction reached —
+ * sale price when it sold, top bid when it did not — and passesPriceBand() can
+ * only band on sale price, so it drops every unsold listing. Banding on the
+ * plotted value instead keeps every mark on screen inside the selected band.
+ * For sold listings the two agree exactly, so the sold-only view is unchanged.
+ *
+ * Subsamples to `max` points for performance, taking sold and unsold in
+ * proportion to their real counts — a single pass over the combined array would
+ * let whichever group is denser crowd the other out and misstate the mix.
  */
-export function computeScatterPoints(records, max = 600) {
+export function computeScatterPoints(
+  records,
+  max = 600,
+  { priceBands = [], includeUnsold = false } = {},
+) {
+  const inBand = (price) =>
+    !priceBands.length ||
+    priceBands.some((bid) => {
+      const b = PRICE_BANDS.find((pb) => pb.id === bid);
+      return b && price >= b.min && price < b.max;
+    });
+
   const sold = [];
+  const unsold = [];
   for (const r of records) {
-    if (
-      r[FIELD.s] === 1 &&
-      r[FIELD.mi] > 0 &&
-      r[FIELD.mi] < 250000 &&
-      r[FIELD.p] > 0 &&
-      r[FIELD.p] < 300000
-    ) {
-      sold.push({
-        mileage: r[FIELD.mi],
-        price: r[FIELD.p],
-        make: DATA.makes[r[FIELD.mk]],
-        model: r[FIELD.md],
-        year: r[FIELD.yr],
-        bids: r[FIELD.b],
-        colorGroup: DATA.colors?.[r[FIELD.cl]] ?? "—",
-        transmission: r[FIELD.tx] || "—",
-        noReserve: r[FIELD.nr] === 1,
-      });
-    }
+    const mi = r[FIELD.mi];
+    if (mi <= 0 || mi >= 250000) continue;
+    const isSale = r[FIELD.s] === 1;
+    if (!isSale && (!includeUnsold || r[FIELD.oc] !== OUTCOME.RESERVE_NOT_MET)) continue;
+    const price = isSale ? r[FIELD.p] : r[FIELD.hb];
+    if (price <= 0 || price >= 300000) continue;
+    if (!inBand(price)) continue;
+    (isSale ? sold : unsold).push({
+      mileage: mi,
+      price,
+      sold: isSale,
+      make: DATA.makes[r[FIELD.mk]],
+      model: r[FIELD.md],
+      year: r[FIELD.yr],
+      bids: r[FIELD.b],
+      colorGroup: DATA.colors?.[r[FIELD.cl]] ?? "—",
+      transmission: r[FIELD.tx] || "—",
+      noReserve: r[FIELD.nr] === 1,
+    });
   }
-  if (sold.length <= max) return sold;
-  const step = sold.length / max;
-  const out = [];
-  for (let i = 0; i < max; i++) {
-    out.push(sold[Math.floor(i * step)]);
-  }
-  return out;
+
+  const total = sold.length + unsold.length;
+  if (total <= max) return [...sold, ...unsold];
+  const stride = (arr, n) => {
+    if (n <= 0) return [];
+    if (arr.length <= n) return arr;
+    const step = arr.length / n;
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(arr[Math.floor(i * step)]);
+    return out;
+  };
+  const soldQuota = Math.round((max * sold.length) / total);
+  return [...stride(sold, soldQuota), ...stride(unsold, max - soldQuota)];
 }
 
 /**
