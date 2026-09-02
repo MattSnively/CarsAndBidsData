@@ -801,14 +801,47 @@ export function groupScatterByMake(points) {
    ============================================================ */
 
 /**
- * One model's auctions as scatter points of end date against the money the
+ * Resolves a { make, model } scope into an index-comparable predicate.
+ *
+ * Scope is a make/model PAIR rather than a bare model string because 42 model
+ * names exist under more than one marque — Sprinter is a Mercedes-Benz, a Toyota
+ * and a Dodge; M2 is a BMW coupe and a Freightliner truck. Keying on the string
+ * alone silently merged 1,606 listings into blended averages.
+ *
+ * An unknown make resolves to -1 and matches nothing, which is the right answer:
+ * a scope naming a make that is not in the data has no listings.
+ */
+function buildScope(scope) {
+  return {
+    makeIx: scope?.make ? DATA.makes.indexOf(scope.make) : null,
+    model: scope?.model ?? null,
+  };
+}
+
+function inScope(rec, s) {
+  if (s.makeIx !== null && rec[FIELD.mk] !== s.makeIx) return false;
+  if (s.model !== null && rec[FIELD.md] !== s.model) return false;
+  return true;
+}
+
+/**
+ * The deep-dive page owns its own make and model selection, so the global
+ * clauses for both are dropped before the remaining filters are applied —
+ * otherwise the page would filter on them twice.
+ */
+function scopeLookups(filters) {
+  return { ...buildUniverseLookups(filters), makeIx: null, models: null };
+}
+
+/**
+ * One scope's auctions as scatter points of end date against the money the
  * auction reached — the sale price when it sold, the top bid when it did not.
  *
  * Both outcomes are plotted so the page shows the whole market rather than only
  * its cleared half: the unsold points are the listings behind the sell-through
- * gap, and reading them against the sold cloud is how you see where a model's
- * reserves are landing too high. Each point carries `sold` so the caller can
- * render the two as visually distinct series.
+ * gap, and reading them against the sold cloud is how you see where reserves are
+ * landing too high. Each point carries `sold` so the caller can render the two
+ * as visually distinct series.
  *
  * Carries each point's index in DATA.records so the tooltip can pull the listing's
  * url and color from the detail sidecar, which is addressed by that same index —
@@ -821,23 +854,20 @@ export function groupScatterByMake(points) {
  * Canceled auctions are excluded outright — they never went to market, the same
  * reason countsInRate() keeps them out of sell-through.
  */
-export function computeModelPoints(model, filters = null) {
-  if (!model) return [];
-  const lookups = filters ? buildUniverseLookups(filters) : null;
+export function computeScopePoints(scope, filters = null) {
+  if (!scope?.make && !scope?.model) return [];
+  const s = buildScope(scope);
+  const lookups = filters ? scopeLookups(filters) : null;
   const points = [];
   for (let i = 0; i < DATA.records.length; i++) {
     const r = DATA.records[i];
-    if (r[FIELD.md] !== model) continue;
+    if (!inScope(r, s)) continue;
     const sold = r[FIELD.s] === 1;
     // A sale plots at its price, an unsold auction at the top bid it reached.
     const price = sold ? r[FIELD.p] : r[FIELD.hb];
     if (price <= 0) continue;
     if (!sold && r[FIELD.oc] !== OUTCOME.RESERVE_NOT_MET) continue;
-    // Honour the other active filters so the page agrees with the global state,
-    // minus the model clause the caller is already selecting on.
-    if (lookups && !passesUniverse(r, filters, { ...lookups, models: null })) {
-      continue;
-    }
+    if (lookups && !passesUniverse(r, filters, lookups)) continue;
     points.push({
       index: i,
       day: r[FIELD.dy],
@@ -859,13 +889,58 @@ export function computeModelPoints(model, filters = null) {
   return points;
 }
 
-/** Records for one model, for the model-scoped versions of the shared aggregates. */
-export function applyModelFilters(model, filters) {
-  const lookups = buildUniverseLookups(filters);
-  const modelOnly = { ...lookups, models: null };
+/** Records for one scope, for the scope-versions of the shared aggregates. */
+export function applyScopeFilters(scope, filters) {
+  if (!scope?.make && !scope?.model) return [];
+  const s = buildScope(scope);
+  const lookups = scopeLookups(filters);
   return DATA.records.filter(
-    (r) => r[FIELD.md] === model && passesUniverse(r, filters, modelOnly),
+    (r) => inScope(r, s) && passesUniverse(r, filters, lookups),
   );
+}
+
+/**
+ * Per-model rollup within one make, for the drill list on the deep-dive page.
+ *
+ * Sorted by cars sold to match the Overview leaderboard, and using the same
+ * countsInRate denominator as every other rate on the site so a model's STR
+ * here agrees with the STR it shows once drilled into.
+ */
+export function computeModelsForMake(make, filters) {
+  if (!make) return [];
+  const s = buildScope({ make });
+  const lookups = scopeLookups(filters);
+  const map = new Map();
+  for (const r of DATA.records) {
+    if (!inScope(r, s)) continue;
+    if (!passesUniverse(r, filters, lookups)) continue;
+    const model = r[FIELD.md];
+    if (!model) continue;
+    let m = map.get(model);
+    if (!m) {
+      m = { model, listed: 0, sold: 0, canceled: 0, priced: 0, gmv: 0 };
+      map.set(model, m);
+    }
+    if (!countsInRate(r)) {
+      m.canceled++;
+      continue;
+    }
+    m.listed++;
+    if (r[FIELD.s] === 1) {
+      m.sold++;
+      if (hasPrice(r)) {
+        m.priced++;
+        m.gmv += r[FIELD.p];
+      }
+    }
+  }
+  return [...map.values()]
+    .map((m) => ({
+      ...m,
+      str: m.listed > 0 ? (m.sold / m.listed) * 100 : 0,
+      avgPrice: m.priced > 0 ? m.gmv / m.priced : 0,
+    }))
+    .sort((a, b) => b.sold - a.sold || b.listed - a.listed);
 }
 
 /* ============================================================

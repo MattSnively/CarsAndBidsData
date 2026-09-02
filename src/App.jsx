@@ -104,7 +104,7 @@ function Shell({ isDark, toggleDark }) {
             <TrendsTab drillMetric={drillMetric} setDrillMetric={setDrillMetric} />
           )}
           {tab === "Listings" && <ListingsTab />}
-          {tab === "Model" && <ModelTab />}
+          {tab === "Brand & Model" && <ModelTab />}
           {tab === "Compare" && <CompareTab />}
           {tab === "Insights" && <InsightsTab />}
         </main>

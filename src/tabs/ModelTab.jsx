@@ -17,12 +17,14 @@ import { Card, CardHeader, Pill } from "../components/Primitives.jsx";
 import { FilterMultiSelect } from "../components/FilterMultiSelect.jsx";
 import { useFilters } from "../components/FilterContext.jsx";
 import {
-  applyModelFilters,
+  applyScopeFilters,
   computeKPIs,
-  computeModelPoints,
+  computeModelsForMake,
   computePriceDist,
   computeReserveSplit,
+  computeScopePoints,
   getListingDetail,
+  getMakeCounts,
   getModels,
   loadDetails,
 } from "../data.js";
@@ -48,6 +50,10 @@ import {
 // The tooltip body sits on INK_SURFACE in both themes, so its secondary text needs
 // a fixed light gray rather than a token that inverts with the theme.
 const TOOLTIP_MUTED = "#a8a8a8";
+
+// The median brand has 2 models and 90% have 18 or fewer, so ten rows shows the
+// whole roster for almost every brand; only the handful of large marques collapse.
+const TOP_MODELS = 10;
 
 function Stat({ label, value, sub }) {
   return (
@@ -232,79 +238,122 @@ export function ModelTab() {
   const { filters, setFilters } = useFilters();
   const [detailsReady, setDetailsReady] = useState(false);
   const [detailsError, setDetailsError] = useState(null);
+  const [showAllModels, setShowAllModels] = useState(false);
   const requested = useRef(false);
 
-  // The page analyses one model; the global filter holds an array. Focus the
-  // first selected one so arriving with a model already chosen just works.
+  // The page analyses one brand, optionally narrowed to one of its models. The
+  // global filters hold arrays, so focus the first of each — arriving with a
+  // selection already made from another tab just works.
+  const selectedMake = filters.makes[0] ?? null;
   const model = filters.models[0] ?? null;
 
-  const modelOptions = useMemo(() => {
-    const all = getModels();
-    const scoped = filters.makes.length
-      ? all.filter((m) => filters.makes.some((mk) => m.makes.has(mk)))
-      : all;
-    return scoped.map((m) => ({ value: m.model, count: m.count }));
-  }, [filters.makes]);
+  // The sidebar's Model typeahead sets a model without a brand, as does arriving
+  // from another tab, which would otherwise show the brand empty state while a
+  // model filter sits visibly active in the bar above it. A model owned by one
+  // marque resolves its own brand; the 42 names shared across marques cannot, so
+  // those fall through to the empty state, which names the candidates.
+  const modelMakes = useMemo(() => {
+    if (selectedMake || !model) return null;
+    return getModels().find((m) => m.model === model)?.makes ?? null;
+  }, [selectedMake, model]);
+
+  const make = selectedMake ?? (modelMakes?.size === 1 ? [...modelMakes][0] : null);
+  const sharedBy = modelMakes?.size > 1 ? [...modelMakes].sort() : null;
+  const scope = useMemo(() => ({ make, model }), [make, model]);
+
+  const makeOptions = useMemo(
+    () => [...getMakeCounts().entries()]
+      .filter(([, count]) => count > 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([value, count]) => ({ value, count })),
+    [],
+  );
 
   // The detail sidecar is comparable in size to the whole dataset, so it is
   // fetched here rather than at startup — only this page needs it.
   useEffect(() => {
-    if (!model || requested.current) return;
+    if (!make || requested.current) return;
     requested.current = true;
     loadDetails(import.meta.env.BASE_URL || "/")
       .then(() => setDetailsReady(true))
       .catch((err) => setDetailsError(err));
-  }, [model]);
+  }, [make]);
 
   const points = useMemo(
-    () => (model ? computeModelPoints(model, filters) : []),
-    [model, filters],
+    () => (make ? computeScopePoints(scope, filters) : []),
+    [make, scope, filters],
   );
   // Recharts needs one <Scatter> per visual treatment, so the outcomes are split
   // here rather than branched inside a single series.
   const soldPoints = useMemo(() => points.filter((p) => p.sold), [points]);
   const unsoldPoints = useMemo(() => points.filter((p) => !p.sold), [points]);
   const records = useMemo(
-    () => (model ? applyModelFilters(model, filters) : []),
-    [model, filters],
+    () => (make ? applyScopeFilters(scope, filters) : []),
+    [make, scope, filters],
+  );
+  // Always the brand's full model roster, never narrowed to the drilled model —
+  // the list doubles as the navigation for switching between them.
+  const modelRows = useMemo(
+    () => (make ? computeModelsForMake(make, filters) : []),
+    [make, filters],
   );
 
   const kpis = useMemo(() => computeKPIs(records), [records]);
   const priceDist = useMemo(() => computePriceDist(records), [records]);
   const reserve = useMemo(() => computeReserveSplit(records), [records]);
-  // Cut the ramp against this model's own mileages, not fixed odometer bands.
+  // Cut the ramp against this scope's own mileages, not fixed odometer bands.
   const mileageScale = useMemo(
     () => buildMileageScale(points.map((p) => p.mileage)),
     [points],
   );
   const hasUnknownMileage = points.some((p) => !p.mileage || p.mileage <= 0);
 
-  const setModel = (next) =>
-    setFilters((f) => ({ ...f, models: next.length ? [next[next.length - 1]] : [] }));
+  // Switching brand clears the model: an A5 is not a BMW, so carrying the old
+  // model across would scope to a pair that has no listings.
+  const setMake = (next) =>
+    setFilters((f) => ({
+      ...f,
+      makes: next.length ? [next[next.length - 1]] : [],
+      models: [],
+    }));
+  const setModel = (next) => setFilters((f) => ({ ...f, models: next ? [next] : [] }));
 
   const picker = (
     <div style={{ maxWidth: 280 }}>
       <FilterMultiSelect
-        mode="typeahead"
-        noun="model"
-        options={modelOptions}
-        selected={filters.models}
-        onChange={setModel}
-        placeholder="Search a model…"
+        mode="list"
+        noun="brand"
+        options={makeOptions}
+        selected={filters.makes}
+        onChange={setMake}
+        placeholder="All brands"
+        searchPlaceholder="Search brands…"
       />
     </div>
   );
 
-  if (!model) {
+  if (!make) {
     return (
       <div className="px-3 md:px-6 py-10">
         <div className="max-w-md mx-auto text-center">
           <div className="text-[17px] font-semibold mb-1.5" style={{ color: INK }}>
-            Analyze a single model
+            Analyze a brand
           </div>
           <div className="text-[12.5px] mb-5 leading-relaxed" style={{ color: GRAY_500 }}>
-            Every sold auction plotted by date and price, shaded by mileage, with the
-            full listing behind each point.
+            {sharedBy ? (
+              <>
+                <span style={{ color: INK, fontWeight: 600 }}>{model}</span> is sold
+                under {sharedBy.length} marques — {sharedBy.join(", ")}. Pick the one
+                you mean; they are different vehicles and averaging them together
+                would not describe any of them.
+              </>
+            ) : (
+              <>
+                Every auction plotted by date and price, shaded by mileage, with the
+                full listing behind each point — then drill into any one of the
+                brand's models.
+              </>
+            )}
           </div>
           <div className="flex justify-center">{picker}</div>
         </div>
@@ -318,6 +367,13 @@ export function ModelTab() {
     const detail = getListingDetail(pt?.index);
     if (detail?.url) window.open(detail.url, "_blank", "noopener");
   };
+
+  const scopeLabel = model ?? make;
+
+  // Bars are sized against the brand's best-selling model so the drill list
+  // reads as a ranking within the brand, not against the whole market.
+  const maxModelSold = Math.max(1, ...modelRows.map((m) => m.sold));
+  const visibleModels = showAllModels ? modelRows : modelRows.slice(0, TOP_MODELS);
 
   const priceValues = points.map((p) => p.price);
   const yMax = priceValues.length ? Math.max(...priceValues) : 0;
@@ -335,10 +391,27 @@ export function ModelTab() {
             className="text-[11px] font-semibold uppercase tracking-[0.1em] mb-1"
             style={{ color: GRAY_500 }}
           >
-            Model deep dive
+            {model ? "Model deep dive" : "Brand deep dive"}
           </div>
-          <div className="text-[22px] font-bold tracking-tight" style={{ color: INK }}>
-            {model}
+          {/* Breadcrumb: the brand stays clickable while drilled in so it is
+              always one click back out to the whole marque. */}
+          <div className="text-[22px] font-bold tracking-tight flex items-baseline gap-2 flex-wrap" style={{ color: INK }}>
+            {model ? (
+              <>
+                <button
+                  onClick={() => setModel(null)}
+                  className="hover:underline"
+                  style={{ color: GRAY_500 }}
+                  title={`Back to all ${make} auctions`}
+                >
+                  {make}
+                </button>
+                <span style={{ color: GRAY_300 }}>›</span>
+                <span>{model}</span>
+              </>
+            ) : (
+              make
+            )}
           </div>
           <div className="text-[12px] mt-0.5" style={{ color: GRAY_500 }}>
             {kpis.totalSold.toLocaleString()} sold of{" "}
@@ -482,12 +555,83 @@ export function ModelTab() {
         )}
       </Card>
 
+      <Card className="mb-3">
+        <CardHeader
+          title={`Models in ${make}`}
+          sub={
+            modelRows.length
+              ? `${modelRows.length.toLocaleString()} model${modelRows.length === 1 ? "" : "s"} · sorted by cars sold · click one to drill in${model ? " · click again to go back" : ""}`
+              : "No models match the current filters"
+          }
+          right={
+            modelRows.length > TOP_MODELS && (
+              <button
+                onClick={() => setShowAllModels((v) => !v)}
+                className="text-[11px] font-medium hover:underline"
+                style={{ color: LIME_DEEP }}
+              >
+                {showAllModels ? `Top ${TOP_MODELS}` : `Show all ${modelRows.length}`}
+              </button>
+            )
+          }
+        />
+        <div
+          className="px-5 pb-5 pt-2"
+          style={showAllModels ? { maxHeight: 340, overflowY: "auto" } : {}}
+        >
+          {visibleModels.map((m) => {
+            const selected = m.model === model;
+            const dimmed = model !== null && !selected;
+            return (
+              <button
+                key={m.model}
+                onClick={() => setModel(selected ? null : m.model)}
+                className="flex items-center gap-3 w-full mb-[5px] px-1 py-0.5 rounded transition-colors cursor-pointer"
+                style={{ opacity: dimmed ? 0.4 : 1 }}
+                title={`${m.sold.toLocaleString()} sold of ${m.listed.toLocaleString()} listed · ${m.str.toFixed(1)}% sell-through`}
+              >
+                <div
+                  className="w-[110px] text-right text-[12px] truncate"
+                  style={{ color: selected ? INK : GRAY_700, fontWeight: selected ? 600 : 400 }}
+                >
+                  {m.model}
+                </div>
+                <div
+                  className="flex-1 h-[14px] relative"
+                  style={{ background: GRAY_100, borderRadius: 2 }}
+                >
+                  <div
+                    className="h-full transition-all"
+                    style={{
+                      width: `${(m.sold / maxModelSold) * 100}%`,
+                      background: selected ? LIME_DEEP : LIME,
+                      borderRadius: 2,
+                    }}
+                  />
+                </div>
+                <div
+                  className="w-[44px] text-[12px] font-medium tabular-nums text-left"
+                  style={{ color: INK }}
+                >
+                  {m.sold.toLocaleString()}
+                </div>
+              </button>
+            );
+          })}
+          {modelRows.length === 0 && (
+            <div className="text-[12px] py-6 text-center" style={{ color: GRAY_500 }}>
+              No models match the current filters
+            </div>
+          )}
+        </div>
+      </Card>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <Card>
           <CardHeader
             title="Price distribution"
             sub={
-              `Where ${model} sales land · sold listings only` +
+              `Where ${scopeLabel} sales land · sold listings only` +
               // Name the gap rather than let these sales vanish from the chart
               // without explanation — they used to land in <$5k instead.
               (kpis.priceUnknown > 0
@@ -540,7 +684,7 @@ export function ModelTab() {
         <Card>
           <CardHeader
             title="Reserve vs No Reserve"
-            sub={`How ${model} listings close under each format`}
+            sub={`How ${scopeLabel} listings close under each format`}
           />
           <div className="px-4 pb-4 pt-1 grid grid-cols-2 gap-3">
             {[
