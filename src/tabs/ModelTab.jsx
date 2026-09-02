@@ -322,11 +322,12 @@ export function ModelTab() {
     <div style={{ maxWidth: 280 }}>
       <FilterMultiSelect
         mode="list"
+        single
         noun="brand"
         options={makeOptions}
-        selected={filters.makes}
+        selected={make ? [make] : []}
         onChange={setMake}
-        placeholder="All brands"
+        placeholder="Choose a brand…"
         searchPlaceholder="Search brands…"
       />
     </div>

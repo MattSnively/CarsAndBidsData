@@ -58,6 +58,13 @@ function SelectedChip({ label, onRemove }) {
  *
  * Selection is by exact option value in both modes, so the two read identically
  * downstream: an array of strings OR'd together by the data layer.
+ *
+ * `single` narrows either presentation to one choice: picking replaces rather
+ * than accumulates, the trigger names the choice instead of counting it, and the
+ * marks are radios rather than checkboxes. It still reports an array so callers
+ * and the data layer need no special case. Use it where the consumer only reads
+ * selected[0] — a control offering checkboxes it will not honour is a lie about
+ * what the page does.
  */
 export function FilterMultiSelect({
   mode,
@@ -68,6 +75,7 @@ export function FilterMultiSelect({
   searchPlaceholder,
   noun,
   minChars = 2,
+  single = false,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -131,6 +139,15 @@ export function FilterMultiSelect({
   }, [open, isTypeahead]);
 
   const toggle = (value) => {
+    if (single) {
+      // One choice replaces the last, and the popover closes because there is
+      // nothing further to pick. This also makes the control honest on pages
+      // that only ever read selected[0].
+      onChange([value]);
+      setQuery("");
+      setOpen(false);
+      return;
+    }
     onChange(
       selected.includes(value)
         ? selected.filter((v) => v !== value)
@@ -167,7 +184,9 @@ export function FilterMultiSelect({
   const summary =
     selected.length === 0
       ? placeholder
-      : `${selected.length} ${noun}${selected.length === 1 ? "" : "s"} selected`;
+      : single
+        ? selected[0]
+        : `${selected.length} ${noun}${selected.length === 1 ? "" : "s"} selected`;
 
   return (
     // Key handling lives on the wrapper so Escape and arrow keys work no matter
@@ -264,7 +283,7 @@ export function FilterMultiSelect({
           <div
             id={listboxId}
             role="listbox"
-            aria-multiselectable="true"
+            aria-multiselectable={!single}
             style={{ maxHeight: 240, overflowY: "auto" }}
           >
             {visible.map((o, i) => {
@@ -285,22 +304,33 @@ export function FilterMultiSelect({
                       style={{
                         width: 12,
                         height: 12,
-                        borderRadius: 2,
+                        // Round reads as "one of these", square as "any of these".
+                        borderRadius: single ? 99 : 2,
                         background: active ? LIME : CARD_BG,
                         border: `1px solid ${active ? LIME_DEEP : GRAY_400}`,
                       }}
                     >
-                      {active && (
-                        <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-                          <path
-                            d="M1.5 4l1.8 1.8L6.5 2.5"
-                            stroke={INK}
-                            strokeWidth="1.6"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
+                      {active &&
+                        (single ? (
+                          <span
+                            style={{
+                              width: 4,
+                              height: 4,
+                              borderRadius: 99,
+                              background: INK,
+                            }}
                           />
-                        </svg>
-                      )}
+                        ) : (
+                          <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                            <path
+                              d="M1.5 4l1.8 1.8L6.5 2.5"
+                              stroke={INK}
+                              strokeWidth="1.6"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        ))}
                     </span>
                     <span className="truncate" style={{ color: INK }}>
                       {o.value}
@@ -334,7 +364,7 @@ export function FilterMultiSelect({
         </div>
       )}
 
-      {selected.length > 0 && (
+      {selected.length > 0 && !single && (
         <div className="flex flex-wrap gap-1 mt-1.5" style={{ minWidth: 0 }}>
           {selected.map((v) => (
             <SelectedChip
